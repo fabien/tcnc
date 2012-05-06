@@ -165,6 +165,9 @@ class TCnc(svg.SuperEffect):
             
             # Convert the simplepath to a 'cubicsuperpath' which is
             # just a list of cubic bezier curves.
+            # This seems to be how most Inkscape plugins do things...
+            # TODO: This is really an unnecessary step since
+            # we could deal with SVG shapes directly...
             csp = cubicsuperpath.CubicSuperPath(path)
             
             # Apply the SVG element transform to the path segments so that
@@ -185,16 +188,9 @@ class TCnc(svg.SuperEffect):
                 for i in range(1,len(subcsp)):
                     sp1 = subcsp[i-1]
                     sp2 = subcsp[i]
-                    #cutpath.extend(geom.biarc(sp1,sp2,0,0))
                     
                     curve = CubicBezier(P(sp1[1]), P(sp1[2]), P(sp2[0]), P(sp2[1]))
                     curve.SVG_plot()
-#                    t1, t2 = curve.find_inflections()
-#                    if t1 > 0.0 or t2 > 0.0:
-#                        subcurves = curve.subdivide2(t1, t2)
-#                        for subcurve in subcurves:
-#                            subcurve.SVG_plot()
-                    
                     biarcs = curve.biarc_approximation(tolerance=biarc_tolerance,
                                                        max_depth=biarc_max_depth,
                                                        line_flatness=line_flatness)
