@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+
+    <name>TCNC G Code</name>
+    
+    <id>com.utlco.tcnc</id>
+    
+	<dependency type="executable" location="extensions">tcnc/tcnc.py</dependency>
+	<dependency type="executable" location="extensions">inkex.py</dependency>
+	
+	<param name="active-tab" type="notebook">
+
+		<page name="options" _gui-text="Options">	
+            <param name="unit" type="optiongroup" appearance="minimal" _gui-text="Unit:">
+                <_option value="in">inch</_option>
+                <_option value="mm">mm</_option>
+            </param>        
+            <param name="auto-select-paths" type="boolean" _gui-text="Select all paths if nothing is selected:">true</param>
+			<param name="biarc-tolerance" type="float" precision="5" min="0.00001" max="10000" _gui-text="Biarc approximation tolerance:">1</param>
+            <param name="biarc-maxdepth" type="int" min="1" max="8" _gui-text="Biarc maximum recursion depth:">4</param>
+            <param name="line-flatness" type="float" precision="5" min="0.00001" max="10000" _gui-text="Curve to line flatness:">1</param>
+            <param name="min-arc-radius" type="float" precision="4" min="0" max="1000"  _gui-text="Minimum arc radius:">0.01</param>
+		</page>
+
+		<page name="transform" _gui-text="Transform">
+			<param name="origin-ref" type="optiongroup" appearance="minimal" _gui-text="Origin reference:">
+				<_option value="paper">Lower left corner of paper</_option>
+				<_option value="bbox">Bounding box of selected paths</_option>
+			</param>
+			<param name="x-offset" type="float" precision="5" _gui-text="X offset:">0.0</param>
+			<param name="y-offset" type="float" precision="5" _gui-text="Y offset:">0.0</param>
+			<param name="x-scale" type="float" precision="5" _gui-text="X scale:">1.0</param>
+			<param name="y-scale" type="float" precision="5" _gui-text="Y scale:">1.0</param>
+			<param name="a-offset" type="float" precision="5" _gui-text="A offset (deg):">0.0</param>
+		</page>
+		
+		<page name="tool" _gui-text="Tool">
+			<param name="xy-feed" type="float" precision="5" _gui-text="XY feed rate:">400.0</param>
+			<param name="z-feed" type="float" precision="5" _gui-text="Z feed rate:">400.0</param>
+			<param name="a-feed" type="float" precision="5" _gui-text="A feed rate (deg/sec):">60.0</param>
+			<param name="z-safe" type="float" precision="5" min="-1000" max="1000" _gui-text="Z safe height:">5</param>
+		</page>
+
+		<page name="output" _gui-text="Output">
+			<param name="directory" type="string" _gui-text="Directory:">~</param>
+			<param name="filename" type="string" _gui-text="File:">output.ngc</param>
+			<param name="append-suffix" type="boolean" _gui-text="Add numeric suffix to filename">true</param>
+
+			<param name="create-log" type="boolean" _gui-text="Generate log file:">false</param>			
+			<param name="log-level" type="optiongroup" appearance="minimal" _gui-text="Log level:">
+				<_option value="DEBUG">Debug</_option>
+				<_option value="INFO">Info</_option>
+				<_option value="WARNING">Warning</_option>
+				<_option value="ERROR">Error</_option>
+				<_option value="CRITICAL">Critical</_option>
+			</param>
+			<param name="log-filename" type="string" _gui-text="Full path to log file:"></param>
+		</page>
+		
+        <page name="debug" _gui-text="Debug"> 
+            <param name="debug-layer" type="boolean" _gui-text="Create debug layer:">false</param>
+        </page>
+
+		<page name="about" _gui-text="About">
+			<_param name="about-text" type="description">
+			hello
+			</_param>
+		</page>
+		
+	</param>	
+    <effect>
+		<effects-menu>
+			<submenu _name="TCNC"/>
+		</effects-menu>
+		<object-type>path</object-type>
+    </effect>
+    <script>
+        <command reldir="extensions" interpreter="python">tcnc/tcnc.py</command>
+    </script>
+</inkscape-extension>
