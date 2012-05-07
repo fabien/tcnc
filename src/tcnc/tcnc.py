@@ -18,9 +18,12 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 '''
+import os
+import fnmatch
 import logging
 import math
 
+import inkex
 import cubicsuperpath
 import simpletransform
 
@@ -103,8 +106,9 @@ class TCnc(svg.SuperEffect):
         '''
         # Create a log file for debugging
         if self.options.log_create_log and self.options.log_filename:
+            log_path = os.path.abspath(os.path.expanduser(self.options.log_filename))
             log_level = getattr(logging, self.options.log_level, DEFAULT_LOG_LEVEL)
-            logging.basicConfig(filename=self.options.log_filename, filemode='w', level=log_level)
+            logging.basicConfig(filename=log_path, filemode='w', level=log_level)
         
         self.docroot = self.document.getroot()
         self.create_inkscape_markers()
@@ -158,7 +162,7 @@ class TCnc(svg.SuperEffect):
         biarc_max_depth = float(self.options.biarc_max_depth)
         line_flatness = float(self.options.line_flatness)
         logging.debug('Biarc tolerance & depth: %f %d' % (biarc_tolerance, biarc_max_depth))
-        pathnode_list = []
+        cutpath_list = []
         for node in nodelist:
             # Convert the shape element to a simplepath
             path = svg.convert_element_to_path(node)
@@ -178,37 +182,30 @@ class TCnc(svg.SuperEffect):
                 mat = simpletransform.parseTransform(transform)
                 simpletransform.applyTransformToPath(mat, csp)
             
-            gcodebuf = ''
-            
             # Convert cubic path segments to arcs and lines
             for subcsp in csp:
                 logging.debug('converting path segments to biarcs')
                 cutpath = []
-                cutpath += [[[subcsp[0][1][0],subcsp[0][1][1]], 'move', 0, 0]]
                 for i in range(1,len(subcsp)):
                     sp1 = subcsp[i-1]
                     sp2 = subcsp[i]
-                    
                     curve = CubicBezier(P(sp1[1]), P(sp1[2]), P(sp2[0]), P(sp2[1]))
-                    curve.SVG_plot()
+#                    curve.SVG_plot()
                     biarcs = curve.biarc_approximation(tolerance=biarc_tolerance,
                                                        max_depth=biarc_max_depth,
                                                        line_flatness=line_flatness)
-                    logging.info('Number of biarcs: %d' % len(biarcs))
-                    for biarc in biarcs:
-                        #biarc.SVG_plot('#ff0000')
-                        if isinstance(biarc, geom.Line):
-                            cutpath.append((biarc.p1, 'line', None, None, biarc.p2, (0, 0)))
-                        else:
-                            cutpath.append((biarc.p1, 'arc', biarc.center, biarc.angle, biarc.p2, (0, 0)))
-
-                cutpath += [ [ [subcsp[-1][1][0],subcsp[-1][1][1]]  ,'end',0,0] ]
-                gcodebuf += self.generate_gcode(cutpath)
-            
-            # Export G code
-            logging.info('gcode:\n' + gcodebuf + '\nend gcode\n')
-                                
-        return pathnode_list
+                    cutpath.extend(biarcs)
+                    
+                cutpath_list.append(cutpath)
+        
+        # Generate and export G code
+        gcodebuf = ''
+        for cutpath in cutpath_list:
+            gcodebuf += self.generate_gcode(cutpath)
+        self.export_gcode(gcodebuf)
+#        logging.info('gcode:\n' + gcodebuf + '\nend gcode\n')
+                             
+        return
     
     def draw_preview_line(self, x1, y1, x2, y2, style_id=None):
         '''Draw an SVG line path on to the preview layer'''
@@ -242,24 +239,10 @@ class TCnc(svg.SuperEffect):
         This method also creates SVG output that serves as a preview to the
         G code output. The SVG output is added to the specified group or layer.
         The cutpath is specified by a list of curve segments which are either
-        lines or biarcs.
-        Each segment is a tuple of parameters defined thus:
-            (
-                start point,
-                type, # can be 'arc', 'line', 'move', 'end'
-                arc center,
-                arc angle,
-                end point,
-                (zstart, # optional
-                zend), # optional
-            )
-        Returns a string of gcode
+        line segments or circular arc segments.
         """
-        if len(cutpath) == 0:
-            return ''                
-        
-        # Calculate the relative rotation amount in radians
         def calc_rotation(current_angle, new_angle):
+            '''Calculate the relative rotation amount in radians'''
             # Normalize the angles to 0-360
             prev_angle = math.fmod(current_angle, 2*math.pi)
             if prev_angle < 0:
@@ -272,6 +255,9 @@ class TCnc(svg.SuperEffect):
                 rotation_angle += 2*math.pi
             return rotation_angle
             
+        if len(cutpath) == 0:
+            return ''                
+        
         gc = gcode.GCode(
                     zsafe=float(self.options.z_safe),
                     zfeed=float(self.options.z_feed),
@@ -280,93 +266,117 @@ class TCnc(svg.SuperEffect):
                     atolerance=geom.EPSILON,
                     )
         
-        def postpath_gcode():
-            gc.tool_up()
-            gc.rehome_rotational_axis()
-
         current_angle = 0.0
+        
+        # Move to the start point of the first path segment.
+        # Move the tool rapidly to the end point
+        gc.tool_up()
+        gc.rapid_move(cutpath[0].p1.x, cutpath[0].p1.y, a=current_angle)
+        
+        # Draw the initial rapid move line on the SVG preview layer
+        self.draw_preview_line(self.last_point[0], self.last_point[1],
+                               cutpath[0].p1.x, cutpath[0].p1.y, 'moveline')            
 
         # Create G-code for each segment of the cutpath
-        for i in range(1,len(cutpath)):
-            this_segment = cutpath[i-1]
-            next_segment = cutpath[i]
-            segment_type = this_segment[1]
+        for segment in cutpath:
+            start_x = segment.p1.x
+            start_y = segment.p1.y
+            end_x = segment.p2.x
+            end_y = segment.p2.y
+            start_z = 0 + depth
+            end_z = 0 + depth
 
-            if segment_type == 'end':
-                postpath_gcode()
-            else:
-                end_x = next_segment[0][0]
-                end_y = next_segment[0][1]
-                
-                if segment_type    == 'move':
-                    # Move the tool rapidly to the end point
-                    gc.tool_up()
-                    gc.rapid_move(end_x, end_y, a=current_angle)
-                    
-                    # Draw the initial rapid move line on the SVG preview layer
-                    self.draw_preview_line(self.last_point[0], self.last_point[1], end_x, end_y,'moveline')            
-                    
-                else: # A feed operation, either linear or circular
-                    self.last_point = (end_x, end_y)
-                    start_x = this_segment[0][0]
-                    start_y = this_segment[0][1]
-                    start_z = this_segment[5][0] + depth
-                    end_z = this_segment[5][1] + depth
-                    
-                    if segment_type == 'line':
-                        # Calculate tool tangent angle for line
-                        a = math.atan2(end_y - start_y, end_x - start_x)
-                        current_angle += calc_rotation(current_angle, a)
-                        gc.feed_rotate(current_angle)
-                        
-                        # Don't bother outputting code if the line is too small
-                        if math.hypot(end_x - start_x, end_y - start_y) > geom.EPSILON:
-                            gc.tool_down(start_z)    
-                            gc.feed(end_x, end_y, end_z)
-                            
-                            # Add the line to the SVG preview layer
-                            self.draw_preview_line(start_x, start_y, end_x, end_y, 'cutline')
-                        
-                    elif segment_type == 'arc':
-                        # Calculate starting tool tangent angle
-                        center_x = this_segment[2][0]
-                        center_y = this_segment[2][1]
-                        arc_angle = this_segment[3]
-                        if arc_angle < 0: # CW ?
-                            a = math.atan2(center_y - start_y, center_x - start_x) + math.pi/2
-                            current_angle += calc_rotation(current_angle, a)
-                        else: # CCW
-                            a = math.atan2(start_y - center_y, start_x - center_x) + math.pi/2
-                            current_angle += calc_rotation(current_angle, a)
-                        gc.feed_rotate(current_angle)    # Rotate to starting arc tangent
-                        current_angle += arc_angle            # Endpoint tangent
-                            
-                        gc.tool_down(start_z)    
+            self.last_point = (end_x, end_y)
             
-                        arc_radius = math.hypot(start_x - center_x, start_y - center_y)
-                        if arc_radius > self.options.min_arc_radius:
-                            gc.feed_arc((arc_angle<0), end_x, end_y, end_z, (center_x-start_x), (center_y-start_y), current_angle)
-                            
-                            # Add the arc to the SVG preview layer
-                            sweep_flag = 0 if arc_angle < 0 else 1
-                            self.draw_preview_arc(start_x, start_y, arc_radius, sweep_flag, end_x, end_y, 'cutarc')
-                            
-                        elif math.hypot(end_x - start_x, end_y - start_y) > geom.EPSILON:
-                            # Arc radius was too small to draw so calculate tangent for line
-                            a = math.atan2(end_y - start_y, end_x - start_x)
-                            current_angle += calc_rotation(current_angle, a)
-                            gc.feed_rotate(current_angle)
-                            # Draw a very short line
-                            gc.feed(end_x, end_y, end_z)
-                            
-                            # Add the line to the SVG preview layer
-                            self.draw_preview_line(start_x, start_y, end_x, end_y, 'cutline')
+            if isinstance(segment, geom.Line):
+                # Calculate tool tangent angle for line
+                a = math.atan2(end_y - start_y, end_x - start_x)
+                current_angle += calc_rotation(current_angle, a)
+                gc.feed_rotate(current_angle)
+                
+                # Don't bother outputting code if the line is too small
+                if math.hypot(end_x - start_x, end_y - start_y) > geom.EPSILON:
+                    gc.tool_down(start_z)    
+                    gc.feed(end_x, end_y, end_z)
                     
-        if cutpath[i][1] == 'end':
-            postpath_gcode()
-        
-        return gc.gcode
+                    # Add the line to the SVG preview layer
+                    self.draw_preview_line(start_x, start_y, end_x, end_y, 'cutline')
+                
+            elif isinstance(segment, geom.Arc):
+                # Calculate starting tool tangent angle
+                center_x = segment.center.x
+                center_y = segment.center.y
+                arc_angle = segment.angle
+                if arc_angle < 0: # CW ?
+                    a = math.atan2(center_y - start_y, center_x - start_x) + math.pi/2
+                    current_angle += calc_rotation(current_angle, a)
+                else: # CCW
+                    a = math.atan2(start_y - center_y, start_x - center_x) + math.pi/2
+                    current_angle += calc_rotation(current_angle, a)
+                gc.feed_rotate(current_angle)    # Rotate to starting arc tangent
+                current_angle += arc_angle       # Endpoint tangent
+                    
+                gc.tool_down(start_z)    
+    
+                arc_radius = math.hypot(start_x - center_x, start_y - center_y)
+                if arc_radius > self.options.min_arc_radius:
+                    gc.feed_arc((arc_angle<0), end_x, end_y, end_z, (center_x-start_x), (center_y-start_y), current_angle)
+                    
+                    # Add the arc to the SVG preview layer
+                    sweep_flag = 0 if arc_angle < 0 else 1
+                    self.draw_preview_arc(start_x, start_y, arc_radius, sweep_flag, end_x, end_y, 'cutarc')
+                    
+                elif math.hypot(end_x - start_x, end_y - start_y) > geom.EPSILON:
+                    # Arc radius was too small to draw so calculate tangent for line
+                    a = math.atan2(end_y - start_y, end_x - start_x)
+                    current_angle += calc_rotation(current_angle, a)
+                    gc.feed_rotate(current_angle)
+                    # Draw a very short line
+                    gc.feed(end_x, end_y, end_z)
+                    
+                    # Add the line to the SVG preview layer
+                    self.draw_preview_line(start_x, start_y, end_x, end_y, 'cutline')
 
+        # Post-path G code
+        gc.tool_up()
+        gc.rehome_rotational_axis()
+        return gc.gcode
+    
+    def export_gcode(self, gcodebuf):
+        '''Export the generated g code to a specified file.'''
+        filedir = os.path.expanduser(self.options.directory)
+        filename = os.path.basename(self.options.filename)
+        path = os.path.abspath(os.path.join(filedir, filename))
+        if self.options.append_suffix:
+            file_root, file_ext = os.path.splitext(filename)
+            # Get a list of existing files that match the numeric suffix.
+            # They should already be sorted.
+            filter_str = '%s_[0-9]*%s' % (file_root, file_ext)
+            files = fnmatch.filter(os.listdir(filedir), filter_str)
+            logging.debug('filter: %s [%s]' % (filter_str, str(files)))
+            if len(files) > 0:
+                # Get the suffix from the last one and add one to it.
+                # This seems overly complicated but it takes care of the case
+                # where the user deletes a file in the middle of the
+                # sequence which guarantees the newest file is always last.
+                last_file = files[-1]
+                file_root, file_ext = os.path.splitext(last_file)
+                try:
+                    suffix = int(file_root[-4:]) + 1
+                except Exception:
+                    suffix = 0
+                filename = file_root[:-4] + ('%04d' % suffix) + file_ext
+                path = os.path.join(filedir, filename)
+            else:
+                path = os.path.join(filedir, file_root + '_0000' + file_ext)
+#        logging.debug('path: %s' % path)
+        
+        try:
+            with open(path, 'w') as f:
+                f.write(gcodebuf)
+        except Exception:
+            inkex.errormsg("Can't write to file: %s" % path)
+        
 
 tcnc = TCnc(option_info)
 tcnc.affect()

@@ -44,7 +44,7 @@
 
 		<page name="output" _gui-text="Output">
 			<param name="directory" type="string" _gui-text="Directory:">~</param>
-			<param name="filename" type="string" _gui-text="File:">output.ngc</param>
+			<param name="filename" type="string" _gui-text="File name:">output.ngc</param>
 			<param name="append-suffix" type="boolean" _gui-text="Add numeric suffix to filename">true</param>
 
 			<param name="create-log" type="boolean" _gui-text="Generate log file:">false</param>			

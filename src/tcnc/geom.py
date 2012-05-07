@@ -580,21 +580,15 @@ class Arc(tuple):
         s = v1.cross(v3) / det
         t = v3.cross(v2) / det
         is_inside_arc = (s >= 0.0 and t >= 0.0)
-#        v1 = self.p1 - self.center
-#        v2 = self.center - self.p2
-#        v3 = p - self.center
-#        c1 = v1.cross(v3)
-#        c2 = v2.cross(v3)
-#        is_inside_arc = (c1 < 0.0 and c2 < 0.0) or (c1 > 0.0 and c2 > 0.0)
         if is_inside_arc:
             #Line(self.center, p).SVG_plot('#00cccc')
             # Distance from arc center to point.
             dp = self.center.distance(p)
             # Distance from point to edge of arc.
             d = abs(dp - self.radius)
-            Line(p, (p - self.center) * (d / dp) + p).SVG_plot('#0000cc')
+#            Line(p, (p - self.center) * (d / dp) + p).SVG_plot('#0000cc')
         else:
-            #Line(self.center, p).SVG_plot('#c0cc00')
+#            Line(self.center, p).SVG_plot('#c0cc00')
             # Otherwise distance to closest arc segment endpoint.
             d = min(self.p1.distance(p), self.p2.distance(p))
         return d
@@ -687,7 +681,6 @@ class CubicBezier(tuple):
         d1 = chord.distance_to_point(self.c1, segment=True)
         d2 = chord.distance_to_point(self.c2, segment=True)
         flatness = max(d1, d2)
-        #logging.debug('Flatness: %.4f' % flatness)
         return flatness
     
     def subdivide(self, t):
@@ -699,11 +692,11 @@ class CubicBezier(tuple):
         if t <= EPSILON or t >= 1.0:
             return (self,)
         cp0, cp1, p, cp2, cp3 = self.controlpoints_at(t)
-        #p.SVG_plot('#00ffff')
+#        p.SVG_plot('#00ffff')
         curve1 = CubicBezier(self.p1, cp0, cp1, p)
         curve2 = CubicBezier(p, cp2, cp3, self.p2)
-        #curve1.SVG_plot()
-        #curve2.SVG_plot()
+#        curve1.SVG_plot()
+#        curve2.SVG_plot()
         return (curve1, curve2)
     
     def subdivide_inflections(self):
@@ -858,16 +851,14 @@ class CubicBezier(tuple):
         curves = self.subdivide_inflections()
         if len(curves) > 1 and max_depth > 0:
             for curve in curves:
-                curve.SVG_plot()
+#                curve.SVG_plot()
                 biarcs.extend(curve.biarc_approximation(tolerance=tolerance, max_depth=max_depth-1, line_flatness=line_flatness))
             return biarcs
-
-        #return biarcs
 
         # Calculate the arc that intersects the two endpoints of this curve
         # and the set of possible biarc joints.
         j_arc = self.biarc_joint_arc()
-        #j_arc.SVG_plot(color='#c00000')
+#        j_arc.SVG_plot(color='#c00000')
         
         if j_arc.radius < EPSILON:
             return biarcs
@@ -885,7 +876,7 @@ class CubicBezier(tuple):
         v = p - j_arc.center
         pjoint = v * (j_arc.radius / v.length()) + j_arc.center
         
-        #pjoint.SVG_plot(color='#ffff00')
+#        pjoint.SVG_plot(color='#ffff00')
                 
         # Create the two arcs that define the biarc
         arc1 = Arc.from_two_points_and_tangent(self.p1, self.c1, pjoint)
@@ -897,8 +888,6 @@ class CubicBezier(tuple):
         if arc2 is None:
             arc2 = Line(self.p1, self.p2)
         
-        #arc1.SVG_plot(color='#00c0c0')
-        #arc2.SVG_plot(color='#00c0c0')
         # Test for Hausdorff distance of approximation to original curve.
         d1 = self.distance_to_arc(arc1)
         d2 = self.distance_to_arc(arc2)
@@ -910,19 +899,9 @@ class CubicBezier(tuple):
             curve1, curve2 = self.subdivide(0.5)
             biarcs.extend(curve1.biarc_approximation(tolerance, max_depth=max_depth-1, line_flatness=line_flatness))
             biarcs.extend(curve2.biarc_approximation(tolerance, max_depth=max_depth-1, line_flatness=line_flatness))
-#            if d1 > tolerance:
-#                biarcs.extend(curve1.biarc_approximation(tolerance, max_depth=max_depth-1, line_flatness=line_flatness))
-#            else:
-#                arc1.SVG_plot(color='#00ffc0')
-#                biarcs.append(arc1)
-#            if d2 > tolerance:
-#                biarcs.extend(curve2.biarc_approximation(tolerance, max_depth=max_depth-1, line_flatness=line_flatness))
-#            else:
-#                arc2.SVG_plot(color='#00ffc0')
-#                biarcs.append(arc2)
         else:
-            #arc1.SVG_plot(color='#00c000')
-            #arc2.SVG_plot(color='#00c000')
+#            arc1.SVG_plot(color='#00c000')
+#            arc2.SVG_plot(color='#00c000')
             biarcs.append(arc1)
             biarcs.append(arc2)
             
@@ -940,7 +919,7 @@ class CubicBezier(tuple):
         for i in range(ndiv+1):
             t = float(i) / ndiv
             p = self.point_at(t)
-            #p.SVG_plot('#00cccc')
+#            p.SVG_plot('#00cccc')
             d = arc.distance_to_point(p)
             dmax = max(dmax, d)
         return dmax
