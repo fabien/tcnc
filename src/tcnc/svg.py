@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 SupportedShapes = ('path', 'rect', 'line', 'circle',
                    'ellipse', 'polyline', 'polygon')
 
+# Scale factors for converting SVG units to inches or mm
+UnitScale = {'in': 90, 'mm': 3.543307}
+
 class SuperEffect(inkex.Effect):
     '''Sort of a beefed up version of inkex.Effect that includes
     more handy methods for generating SVG and traversing the inkscape document.
@@ -147,8 +150,8 @@ class SuperEffect(inkex.Effect):
     
 def flatten_nodetree(nodetree, mtransform=[[1.0, 0.0, 0.0],[0.0, 1.0, 0.0]],
                      parent_visibility='visible', skip_layers=None, nodelist=None):
-    '''Recursively traverse an SVG node tree and flatten it to a list of SVG
-    shape elemenst.
+    '''Recursively traverse an SVG node tree and flatten it to a list of 
+    tuples containing an SVG shape element and it's current layer transform.
     This does a depth-first traversal of <g> and <use> elements.
     Anything besides paths, rectangles, circles, ellipses, lines, polygons,
     and polylines are ignored.
@@ -167,8 +170,6 @@ def flatten_nodetree(nodetree, mtransform=[[1.0, 0.0, 0.0],[0.0, 1.0, 0.0]],
         if v == 'hidden' or v == 'collapse':
             continue
         
-        logging.debug('traversing node')
-
         # first apply the current transform matrix to this node's tranform
         transform = simpletransform.parseTransform(node.get('transform'))
         mtransform_node = simpletransform.composeTransform(mtransform, transform)
@@ -177,9 +178,7 @@ def flatten_nodetree(nodetree, mtransform=[[1.0, 0.0, 0.0],[0.0, 1.0, 0.0]],
             if skip_layers and node.get(inkex.addNS('groupmode', 'inkscape')) == 'layer':
                 layer_name = node.get(inkex.addNS('label', 'inkscape'))
                 if layer_name in skip_layers:
-                    logging.debug('skipping layer: ' + layer_name)
                     continue
-            logging.debug('traversing group')
             # Recursively traverse groups
             flatten_nodetree(node, mtransform_node, parent_visibility=v,
                              nodelist=nodelist)
@@ -215,13 +214,12 @@ def flatten_nodetree(nodetree, mtransform=[[1.0, 0.0, 0.0],[0.0, 1.0, 0.0]],
         elif get_node_tag(node) in SupportedShapes:
             # Set this node's transform to the combined transform
             #node.set('transform', simpletransform.formatTransform(mtransform_node))
-            nodelist.append(node)
+            nodelist.append((node, mtransform_node))
 
         else:
             # silently ignore text, images, etc.
             pass
 
-    logging.debug('nodelist: ' + str(nodelist))
     return nodelist
 
 

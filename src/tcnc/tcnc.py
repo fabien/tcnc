@@ -125,11 +125,10 @@ class TCnc(svg.SuperEffect):
 
         # Extract all the recognized SVG shape elements
         skip_layers=(PREVIEW_LAYER_NAME,)
-        nodelist = svg.flatten_nodetree(rootnodes, skip_layers=skip_layers)
+        shapelist = svg.flatten_nodetree(rootnodes, skip_layers=skip_layers)
         
         # Create a new layer that will contain the G code preview
         self.preview_layer = self.create_layer(PREVIEW_LAYER_NAME)
-        #self.set_current_layer(PREVIEW_LAYER_NAME)
         
         if self.options.debug_layer:
             debug_layer = self.create_layer(DEBUG_LAYER_NAME)
@@ -139,8 +138,17 @@ class TCnc(svg.SuperEffect):
         
         self.current_layer = self.preview_layer        
 
+        # Add a transform to the preview layer to flip the coordinates
+        # from cartesian to SVG (flip Y axis from lower left to upper left).
+        # TODO:
+        page_height = float(self.docroot.get('height'))
+        page_width = float(self.docroot.get('width'))
+        flip_transform_str = 'translate(0, %f) scale(1, -1)' % page_height
+        self.preview_layer.set('transform', flip_transform_str)
+        flip_transform = simpletransform.parseTransform(flip_transform_str)
+        
         # Process the SVG elements and generate G code
-        self.process_shapes(nodelist)
+        self.process_shapes(shapelist, flip_transform)
             
             
     def create_inkscape_markers(self):
@@ -154,16 +162,16 @@ class TCnc(svg.SuperEffect):
                           self.styles['movepath_end_marker'], 'scale(0.5) translate(-4.5,0)')
 
 
-    def process_shapes(self, nodelist):
+    def process_shapes(self, shapelist, transform):
         '''Process the SVG shape elements and generate G code.
         Return a list of cut paths as SVG path elements.
         '''
         biarc_tolerance = float(self.options.biarc_tolerance)
         biarc_max_depth = float(self.options.biarc_max_depth)
         line_flatness = float(self.options.line_flatness)
-        logging.debug('Biarc tolerance & depth: %f %d' % (biarc_tolerance, biarc_max_depth))
+
         cutpath_list = []
-        for node in nodelist:
+        for node, layer_transform in shapelist:
             # Convert the shape element to a simplepath
             path = svg.convert_element_to_path(node)
             
@@ -174,14 +182,16 @@ class TCnc(svg.SuperEffect):
             # we could deal with SVG shapes directly...
             csp = cubicsuperpath.CubicSuperPath(path)
             
-            # Apply the SVG element transform to the path segments so that
-            # we are working in absolute coordinates
-            transform = node.get('transform')
-            if transform:
-                logging.debug('transform: ' + transform)
-                mat = simpletransform.parseTransform(transform)
-                simpletransform.applyTransformToPath(mat, csp)
-            
+            # Apply the SVG element transform and it's layer transform to the
+            # path segments so that we are working in absolute coordinates.
+            # Transform SVG coordinates into cartesian (ie G code) coordinates
+            # (flip the Y axis from upper left to lower left).
+            # TODO
+            node_transform = simpletransform.parseTransform(node.get('transform'))
+            node_transform = simpletransform.composeTransform(node_transform, layer_transform)
+            node_transform = simpletransform.composeTransform(node_transform, transform)
+            simpletransform.applyTransformToPath(node_transform, csp)
+                        
             # Convert cubic path segments to arcs and lines
             for subcsp in csp:
                 logging.debug('converting path segments to biarcs')
