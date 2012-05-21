@@ -12,15 +12,11 @@
 	<param name="active-tab" type="notebook">
 
 		<page name="options" _gui-text="Options">	
-            <param name="unit" type="optiongroup" appearance="minimal" _gui-text="Unit:">
-                <_option value="in">inch</_option>
-                <_option value="mm">mm</_option>
-            </param>        
             <param name="auto-select-paths" type="boolean" _gui-text="Select all paths if nothing is selected:">true</param>
-			<param name="biarc-tolerance" type="float" precision="5" min="0.00001" max="10000" _gui-text="Biarc approximation tolerance:">1</param>
-            <param name="biarc-maxdepth" type="int" min="1" max="8" _gui-text="Biarc maximum recursion depth:">4</param>
-            <param name="line-flatness" type="float" precision="5" min="0.00001" max="10000" _gui-text="Curve to line flatness:">1</param>
-            <param name="min-arc-radius" type="float" precision="4" min="0" max="1000"  _gui-text="Minimum arc radius:">0.01</param>
+			<param name="biarc-tolerance" type="float" precision="5" min="0.00001" max="1000" _gui-text="Curve approximation tolerance:">4.0</param>
+            <param name="biarc-maxdepth" type="int" min="1" max="8" _gui-text="Maximum curve divisions:">4</param>
+            <param name="line-flatness" type="float" precision="5" min="0.00001" max="1000" _gui-text="Curve to line tolerance:">0.0001</param>
+            <param name="min-arc-radius" type="float" precision="5" min="0.00001" max="1000"  _gui-text="Minimum arc radius:">0.0001</param>
 		</page>
 
 		<page name="transform" _gui-text="Transform">
@@ -36,17 +32,33 @@
 		</page>
 		
 		<page name="tool" _gui-text="Tool">
-			<param name="xy-feed" type="float" precision="5" _gui-text="XY feed rate:">400.0</param>
-			<param name="z-feed" type="float" precision="5" _gui-text="Z feed rate:">400.0</param>
-			<param name="a-feed" type="float" precision="5" _gui-text="A feed rate (deg/sec):">60.0</param>
-			<param name="z-safe" type="float" precision="5" min="-1000" max="1000" _gui-text="Z safe height:">5</param>
+			<param name="xy-feed" type="float" precision="2" min="0" max="1000" _gui-text="XY feed rate:">400.0</param>
+			<param name="z-feed" type="float" precision="2" min="0" max="1000" _gui-text="Z feed rate:">400.0</param>
+			<param name="a-feed" type="float" precision="2" min="0" max="1000" _gui-text="A feed rate (deg/sec):">60.0</param>
+			<param name="z-safe" type="float" precision="4" min="-1000" max="1000" _gui-text="Z safe height:">5</param>
+        </page>
+
+        <page name="brush" _gui-text="Brush">
+            <param name="brush-reload" type="boolean" _gui-text="Enable brush reload:">false</param>
+            <param name="brushstroke-max" type="float" precision="2" min="0" max="1000" _gui-text="Max brushstroke distance:">7</param>
+            <param name="brushstroke-overlap" type="float" precision="2" min="0" max="1000" _gui-text="Brushstroke overlap:">.5</param>
+            <param name="brush-dwell" type="float" precision="1" _gui-text="Brush reload time (seconds):">5</param>
 		</page>
+
+        <page name="gcode" _gui-text="G Code">
+            <param name="units" type="optiongroup" appearance="minimal" _gui-text="Units:">
+                <_option value="doc">use document units</_option>
+                <_option value="in">inch</_option>
+                <_option value="mm">mm</_option>
+            </param>
+        </page>
 
 		<page name="output" _gui-text="Output">
 			<param name="directory" type="string" _gui-text="Directory:">~</param>
 			<param name="filename" type="string" _gui-text="File name:">output.ngc</param>
 			<param name="append-suffix" type="boolean" _gui-text="Add numeric suffix to filename">true</param>
 
+            <param name="debug-layer" type="boolean" _gui-text="Create debug layer:">false</param>
 			<param name="create-log" type="boolean" _gui-text="Generate log file:">false</param>			
 			<param name="log-level" type="optiongroup" appearance="minimal" _gui-text="Log level:">
 				<_option value="DEBUG">Debug</_option>
@@ -58,13 +70,9 @@
 			<param name="log-filename" type="string" _gui-text="Full path to log file:"></param>
 		</page>
 		
-        <page name="debug" _gui-text="Debug"> 
-            <param name="debug-layer" type="boolean" _gui-text="Create debug layer:">false</param>
-        </page>
-
 		<page name="about" _gui-text="About">
 			<_param name="about-text" type="description">
-			hello
+			TCNC Version 0.1
 			</_param>
 		</page>
 		

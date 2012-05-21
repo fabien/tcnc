@@ -20,6 +20,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 '''
 import logging
 import math
+import sys
 
 import inkex
 import simpletransform
@@ -30,9 +31,6 @@ logger = logging.getLogger(__name__)
 SupportedShapes = ('path', 'rect', 'line', 'circle',
                    'ellipse', 'polyline', 'polygon')
 
-# Scale factors for converting SVG units to inches or mm
-UnitScale = {'in': 90, 'mm': 3.543307}
-
 class SuperEffect(inkex.Effect):
     '''Sort of a beefed up version of inkex.Effect that includes
     more handy methods for generating SVG and traversing the inkscape document.
@@ -41,6 +39,7 @@ class SuperEffect(inkex.Effect):
     current_layer = None
     layer_cache = {}
     layer_stack = []
+
         
     def __init__(self, option_info=None, *args, **kwargs):
         #super(SuperEffect, self).__init__(*args, **kwargs)
@@ -52,7 +51,37 @@ class SuperEffect(inkex.Effect):
                 self.OptionParser.add_option(opt[0], action=opt[1],
                                              type=opt[2], dest=opt[3],
                                              default=opt[4], help=opt[5])
-            
+
+
+    def get_canonical_doc_units(self):
+        '''Return the document units. If the document units
+        are "cm" or "m" return "mm". If the doc units are "ft"
+        return "in".
+        '''
+        units = self.get_document_units()
+        if units == 'ft':
+            units = 'in'
+        if units in ('cm', 'm'):
+            units = 'mm'
+        return units
+        
+    def get_document_units(self):
+        '''Return the Inkscape document units (in, mm, etc.).'''
+#        basedoc = self.document.xpath('//sodipodi:namedview[@id="base"]',
+#                                      namespaces=inkex.NSS)
+        basedoc = self.getNamedView()
+        units = None
+        if basedoc is not None:
+            units = basedoc.get(inkex.addNS('document-units', 'inkscape'))
+            if units is None:
+                units = basedoc.get('units')
+        return units
+    
+    def get_unit_scale(self, units):
+        '''Return the scale factor to scale SVG coordinates to
+        document unit coordinates'''
+        return 1.0 / inkex.uuconv[units]
+    
     def find_layer(self, layer_name):
         '''Find and return the layer whose layer name (label) is <layer_name>.
         Returns None if none found.

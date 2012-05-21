@@ -363,8 +363,7 @@ class Line(tuple):
     
     def length(self):
         '''Return the length of this line segment.'''
-        v = self.p2 - self.p1
-        return v.length()
+        return (self.p2 - self.p1).length()
     
     def slope(self):
         '''Return the slope of this line.'''
@@ -560,6 +559,10 @@ class Arc(tuple):
         cy = mp.y + (sign * h * ((p2.x - p1.x) / d))
         return P(cx, cy)
     
+    def length(self):
+        '''Return the length of this arc segment (radius * angle)'''
+        return abs(self.radius * self.angle)
+    
     def distance_to_point(self, p):
         '''Return the Hausdorff distance from this arc segment
         to the specified point.
@@ -592,6 +595,40 @@ class Arc(tuple):
             # Otherwise distance to closest arc segment endpoint.
             d = min(self.p1.distance(p), self.p2.distance(p))
         return d
+    
+    def point_at(self, angle):
+        '''Return the point on this arc given the specified angle from
+        the start point of the arc segment.'''
+        if angle < EPSILON or angle > abs(self.angle):
+            return None
+        # TODO: there is surely a faster way to do this....
+        v1 = self.p1 - self.center
+        v2 = self.p2 - self.center
+        a1 = math.fmod(math.atan2(v1.y, v1.x) + math.pi, 2 * math.pi)
+        a2 = math.fmod(math.atan2(v2.y, v2.x) + math.pi, 2 * math.pi)
+        if a1 > a2:
+            angle = a1 - angle
+        else:
+            angle = a1 + angle
+        x = self.center.x + self.radius * math.cos(angle)
+        y = self.center.y + self.radius * math.sin(angle)
+        return P(x, y)
+            
+    def subdivide(self, angle):
+        '''Split this arc into two arcs at the point on this arc given
+        by the specified positive arc angle (0-2pi) from the start point.
+        Returns a tuple containing one or two Arc objects.
+        '''
+        if angle < EPSILON:
+            return (self,)
+        angle2 = abs(self.angle) - angle
+        p = self.point_at(angle)
+        if self.angle < 0:
+            angle = -angle
+            angle2 = -angle2
+        arc1 = Arc(self.p1, p, self.radius, angle, self.center)
+        arc2 = Arc(p, self.p2, self.radius, angle2, self.center)
+        return (arc1, arc2)
 
     def to_SVG_path(self):
         '''Return a string with the SVG path 'd' attribute
