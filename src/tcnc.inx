@@ -43,6 +43,7 @@
             <param name="brushstroke-max" type="float" precision="2" min="0" max="1000" _gui-text="Max brushstroke distance:">7</param>
             <param name="brushstroke-overlap" type="float" precision="2" min="0" max="1000" _gui-text="Brushstroke overlap:">.5</param>
             <param name="brush-dwell" type="float" precision="1" _gui-text="Brush reload time (seconds):">5</param>
+            <param name="brush-reload-angle" type="float" precision="2" _gui-text="Brush reload angle (degrees):">90</param>
 		</page>
 
         <page name="gcode" _gui-text="G Code">
