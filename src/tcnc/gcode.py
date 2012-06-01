@@ -24,6 +24,11 @@ from datetime import datetime
 
 EPSILON = 0.00001   # Default tolerance for floating point comparison
 
+# Current machine target
+TARGET = 'linuxcnc'
+# Target machine info - machine name, version
+TARGET_INFO = {'linuxcnc': ('LinuxCNC', '2.4'),}
+
 class GCode(object):
     '''
     '''
@@ -79,7 +84,9 @@ class GCode(object):
         self.comment('----------------------------------------------------------')
         for line in description:
             self.comment(line)
-        self.comment(str(datetime.today()))
+        self.comment('Creation date: %s' % str(datetime.today()))
+        self.comment('Target machine: %s, version %s' % \
+                     (TARGET_INFO[TARGET][0], TARGET_INFO[TARGET][1]))
         self.comment('----------------------------------------------------------')
         if units == 'mm':
             self.addline('G21', 'Units are in millimeters')
@@ -92,9 +99,20 @@ class GCode(object):
         '''Output a default G code file footer.'''
         self.addline('%')
     
-    def dwell(self, seconds):
-        '''Output a dwell command which pauses the tool for specified seconds'''
-        self.addline('G04 X%.4f' % seconds, 'Pause tool for X seconds')
+    def dwell(self, milliseconds):
+        '''Output a dwell command which pauses the tool for the specified
+        number of milliseconds'''
+        # LinuxCNC interprets P as seconds whereas pretty much everything else
+        # (ie Fanuc) interprets the parameter as milliseconds...
+        # Also, LinuxCNC does not accept X or U as the parameter
+        if milliseconds > 0:
+            if TARGET == 'linuxcnc':
+                seconds = milliseconds / 1000
+                self.addline('G04 P%.4f' % seconds,
+                             'Pause tool for %.4f seconds' % seconds)
+            else:
+                self.addline('G04 P%f' % milliseconds,
+                             'Pause tool for %f milliseconds' % milliseconds)
     
     def tool_up(self):
         '''Moves tool to a safe Z axis height.'''
