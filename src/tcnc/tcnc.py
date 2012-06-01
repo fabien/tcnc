@@ -71,6 +71,7 @@ option_info = (
     ('--brushstroke-max', 'store', 'float', 'brushstroke_max', '10', 'Maximum brushstroke distance.'),
     ('--brushstroke-overlap', 'store', 'float', 'brushstroke_overlap', '0', 'Brushstroke overlap.'),
     ('--brush-dwell', 'store', 'float', 'brush_dwell', '0', 'Brush reload time (seconds).'),
+    ('--brush-reload-angle', 'store', 'float', 'brush_reload_angle', '90', 'Brush reload angle (degrees).'),
    
     ('--directory', 'store', 'string', 'directory', '~', 'Directory for gcode file'),
     ('--filename', 'store', 'string', 'filename', '-1.0', 'File name'), 
@@ -206,9 +207,10 @@ class TCnc(svg.SuperEffect):
             # path segments so that we are working in absolute coordinates.
             # Transform SVG coordinates into cartesian (ie G code) coordinates
             # (flip the Y axis from upper left to lower left).
-            node_transform = simpletransform.parseTransform(node.get('transform'))
-            node_transform = simpletransform.composeTransform(node_transform, transform)
-            node_transform = simpletransform.composeTransform(node_transform, layer_transform)
+#            node_transform = simpletransform.parseTransform(node.get('transform'))
+#            node_transform = simpletransform.composeTransform(node_transform, transform)
+#            node_transform = simpletransform.composeTransform(node_transform, layer_transform)
+            node_transform = simpletransform.composeTransform(transform, layer_transform)
             simpletransform.applyTransformToPath(node_transform, csp)
                         
             # Convert cubic path segments to arcs and lines
@@ -315,10 +317,7 @@ class TCnc(svg.SuperEffect):
         for segment in cutpath:
             start = geom.P(segment.p1)
             end = geom.P(segment.p2)
-            start_z = depth
-            end_z = depth
-
-            self.last_point = geom.P(segment.p2)
+            self.last_point = geom.P(end)
             
             if isinstance(segment, geom.Line):
                 # Calculate tool tangent angle for line
@@ -328,12 +327,12 @@ class TCnc(svg.SuperEffect):
                     gc.feed_rotate(current_angle)
                 else:
                     gc.rapid_move(start.x, start.y, a=current_angle)
-                    gc.tool_down(start_z)
+                    gc.tool_down(depth)
                 
                 seglen = start.distance(end)
                 if seglen > geom.EPSILON:
                     self.feed_distance += seglen
-                    gc.feed(end.x, end.y, end_z)
+                    gc.feed(end.x, end.y, depth)
                     # Add the line to the SVG preview layer
                     self.draw_preview_line(start, end, 'cutline')
                 
@@ -348,13 +347,13 @@ class TCnc(svg.SuperEffect):
                     gc.feed_rotate(current_angle)   # Rotate to starting arc tangent
                 else:
                     gc.rapid_move(start.x, start.y, a=current_angle)
-                    gc.tool_down(start_z)
+                    gc.tool_down(depth)
                 current_angle += segment.angle  # Endpoint tangent angle
-                gc.tool_down(start_z)    
+                gc.tool_down(depth)    
                 seglen = segment.length()
                 if seglen > geom.EPSILON:
                     self.feed_distance += seglen
-                    gc.feed_arc((segment.angle<0), end.x, end.y, end_z,
+                    gc.feed_arc((segment.angle<0), end.x, end.y, depth,
                                 (segment.center.x-start.x),
                                 (segment.center.y-start.y), current_angle)
                     # Add the arc to the SVG preview layer
@@ -365,17 +364,27 @@ class TCnc(svg.SuperEffect):
             # If enabled and the tool has traveled a specified distance
             # pause the brush to allow paint reloading.
             if self.options.brush_reload and self.feed_distance >= self.max_feed_distance:
-                gc.comment('Pause for brush reload')
-                gc.tool_up()
-                gc.dwell(self.options.brush_dwell)
-                gc.tool_down(start_z)
-                self.draw_preview_dot(end.x, end.y, color='#0000ff')
-                self.feed_distance = 0.0
+                self.reload_brush_gcode(gc, end, current_angle, depth)
                     
         # Post-path G code
         gc.tool_up()
         gc.rehome_rotational_axis()
         return
+    
+    def reload_brush_gcode(self, gc, stop_point, current_angle, depth):
+        '''Generate the G code for reloading the brush tool.'''
+        gc.comment('Pause for brush reload')
+        gc.tool_up()
+        # Rotate the brush to a position that makes it easy to add paint
+        gc.rapid_move(stop_point.x, stop_point.y, a=self.options.brush_reload_angle)
+        # Pause to add more paint to the brush
+        gc.dwell(self.options.brush_dwell * 1000)
+        # Rotate brush back to drawing angle
+        gc.rapid_move(stop_point.x, stop_point.y, a=current_angle)
+        gc.tool_down(depth)
+        self.draw_preview_dot(stop_point.x, stop_point.y, color='#0000ff')
+        # Reset the feed distance count
+        self.feed_distance = 0.0        
     
     def export_gcode(self, gc):
         '''Export the generated g code to a specified file.'''
