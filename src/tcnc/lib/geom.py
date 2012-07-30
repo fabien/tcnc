@@ -20,8 +20,9 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 '''
 import logging
 import math
+logger = logging.getLogger(__name__)
 
-DEBUG = False
+DEBUG = True
 # This can be set to a svg.SuperEffect during testing/debugging if using
 # Inkscape as a visual/interactive test platform.
 DEBUG_EFFECT = None
@@ -30,8 +31,10 @@ DEBUG_LAYER = None
 TransformIdentity2D = [[1.0, 0.0, 0.0],[0.0, 1.0, 0.0]]
 '''2D Tranform Identity Matrix'''
 
-EPSILON = 0.0001
+EPSILON = 0.00001
 EPSILON2 = EPSILON**2
+PHASH_RND = 5 # Rounding precision for point hash - should correspond to EPSILON
+PHASH_STR = '%%.%df,%%.%df' % (PHASH_RND, PHASH_RND)
 
 def set_epsilon(epsilon):
     '''Set the global absolute error value and rounding limit for approximate
@@ -44,9 +47,15 @@ def set_epsilon(epsilon):
     for very small values close to zero. Otherwise approximate
     comparison operations will not behave as expected.
     '''
-    global EPSILON, EPSILON2
+    global EPSILON, EPSILON2, PHASH_RND, PHASH_STR
     EPSILON = float(epsilon)
     EPSILON2 = EPSILON**2
+    precision = 0
+    while epsilon < 1.0:
+        precision += 1
+        epsilon *= 10
+    PHASH_RND = precision
+    PHASH_STR = '%%.%df,%%.%df' % (PHASH_RND, PHASH_RND)
 
 def float_eq(a, b):
     '''Compare two floats for equality.
@@ -212,12 +221,17 @@ class P(tuple):
         return s >= 0.0 and t >= 0.0 and (s+t) <= 1
 
     def __eq__(self, other):
-        '''Compare for equality. You may want to use almost_equal() instead.'''
-        try:
-            x2, y2 = other
-            return self[0] == x2 and self[1] == y2
-        except:
-            return False
+        '''Compare for equality.'''
+        # Use EPSILON to compare point values so that spatial hash tables
+        # and other geometric comparisons work as expected.
+        # There may be cases where an exact compare is necessary but for
+        # most purposes (like collision detection) this works better.
+        return self.almost_equal(other)
+#        try:
+#            x2, y2 = other
+#            return self[0] == x2 and self[1] == y2
+#        except:
+#            return False
 
     def __nonzero__(self):
         '''Return True if this is not a null vector (x!=0 and y!=0).'''
@@ -317,8 +331,6 @@ class P(tuple):
         '''Compute the absolute magnitude of the vector.'''
         return self.length()
 
-    __hash__ = tuple.__hash__ # hash is not inherited in Py 3
-    
     def __str__(self):
         '''Concise string representation.'''
         return "P(%.4f, %.4f)" % self
@@ -326,6 +338,18 @@ class P(tuple):
     def __repr__(self):
         '''Precise string representation.'''
         return "P(%r, %r)" % self
+    
+    def __hash__(self):
+#        hashval = (PHASH_STR % (self[0], self[1])).__hash__()
+        # This is from http://www.beosil.com/download/CollisionDetectionHashing_VMV03.pdf
+        # TODO: consider http://www.boost.org/doc/libs/1_46_1/boost/functional/hash/detail/hash_float_generic.hpp
+        # This seems to work pretty well and is very fast.
+        a = int(self[0] * 73856093)
+        b = int(self[1] * 83492791)
+        hashval = a ^ b
+        return hashval
+    
+#    __hash__ = tuple.__hash__ # hash is not inherited in Py 3
     
     def SVG_plot(self, color='#000000'):
         '''Draw a dot. Useful for debugging and testing.'''
@@ -456,7 +480,19 @@ class Line(tuple):
         c1 = v1.cross(v2)
         c2 = v1.cross(v3)
         return (c1 >=0 and c1 >= 0) or (c1 < 0 and c2 < 0)
+    
+    def reverse(self):
+        '''Return a Line segment with start and end points reversed.'''
+        return Line(self.p2, self.p1)
         
+    def __str__(self):
+        '''Concise string representation.'''
+        return "Line(P(%.4f, %.4f), P(%.4f, %.4f))" % (self.p1[0], self.p1[1], self.p2[0], self.p2[1])
+
+    def __repr__(self):
+        '''Precise string representation.'''
+        return "Line(P(%r, %r), P(%r, %r))" % (self.p1[0], self.p1[1], self.p2[0], self.p2[1])
+
     def to_SVG_path(self):
         '''Return a string with the SVG path 'd' attribute
         that corresponds with this line.
@@ -470,6 +506,54 @@ class Line(tuple):
             attrs = {'d': self.to_SVG_path(), 'style': style}
             DEBUG_EFFECT.create_path(attrs, layer=DEBUG_LAYER)
         
+
+class Rectangle(tuple):
+    '''Two dimensional immutable rectangle defined by two points.
+    The first is the lower left corner,
+    the second is the upper right.
+    '''
+    def __new__(self, p1, p2):
+        if p1[0] <= p2[0]:
+            x1 = p1[0]
+            x2 = p2[0]
+        else:
+            x1 = p2[0]
+            x2 = p1[0]
+        if p1[1] <= p2[1]:
+            y1 = p1[1]
+            y2 = p2[1]
+        else:
+            y1 = p2[1]
+            y2 = p1[1]
+        return tuple.__new__(Rectangle, (P(x1, y1), P(x2, y2)))
+    
+    @property
+    def p1(self):
+        '''The first corner of rectangle.'''
+        return self[0]
+
+    @property
+    def p2(self):
+        '''The second corner of rectangle.'''
+        return self[1]
+    
+    def height(self):
+        '''Height of rectangle. (along Y axis)'''
+        return self[1][1] - self[0][1]
+    
+    def width(self):
+        '''Width of rectangle. (along X axis)'''
+        return self[1][0] - self[0][0]
+    
+    def point_inside(self, p):
+        '''Return True if the point is inside this rectangle.'''
+        return p[0] > self[0][0] and p[0] < self[1][0] \
+                and p[1] > self[0][1] and p[1] < self[1][1]
+
+    def line_inside(self, line):
+        '''Return True if the line segment is inside this rectangle.'''
+        return self.point_inside(line.p1) and self.point_inside(line.p2)
+
     
 
 class Arc(tuple):

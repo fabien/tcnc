@@ -97,6 +97,8 @@ class GCode(object):
     
     def default_footer(self):
         '''Output a default G code file footer.'''
+        # Move all axis to home position
+        self.rapid_move(0.0, 0.0, self.zsafe, 0.0)
         self.addline('%')
     
     def dwell(self, milliseconds):

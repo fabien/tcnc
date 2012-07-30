@@ -29,11 +29,12 @@ import inkex
 import cubicsuperpath
 import simpletransform
 
-import svg
-import geom
+import lib
+from lib import svg
+from lib import geom
 import gcode
 
-from geom import P, CubicBezier
+from lib.geom import P, CubicBezier
 
 VERSION = "0.1"
 
@@ -43,53 +44,6 @@ logger = logging.getLogger(__name__)
 PREVIEW_LAYER_NAME = 'tcnc-preview'
 DEBUG_LAYER_NAME = 'tcnc-debug'
 
-option_info = (
-    ('--active-tab', 'store', 'string', 'active_tab', '', ''),
-    
-    ('--units', 'store', 'string', 'units', 'in', 'Document units.'),
-    ('--auto-select-paths', 'store', 'inkbool', 'auto_select_paths', True, 'Select all paths if nothing is selected.'),
-    ('--biarc-tolerance', 'store', 'float', 'biarc_tolerance', '1', 'Biarc approximation fitting tolerance.'),                
-    ('--biarc-maxdepth', 'store', 'float', 'biarc_max_depth', '4', 'Biarc approximation maximum curve splitting recursion depth.'),                
-    ('--line-flatness', 'store', 'float', 'line_flatness', '0.5', 'Curve to line flatness.'),                
-    ('--min-arc-radius', 'store', 'float', 'min_arc_radius', '.01', 'All arcs having radius less than minimum will be considered as straight line'),
-
-    ('--origin-ref', 'store', 'string', 'origin_ref', 'paper', 'Lower left origin reference.'),
-    ('--z-scale', 'store', 'float', 'z_scale', '1.0', 'Scale factor Z'), 
-    ('--z-offset', 'store', 'float', 'z_offset', '0.0', 'Offset along Z'),
-    ('--x-scale', 'store', 'float', 'x_scale', '1.0', 'Scale factor X'), 
-    ('--x-offset', 'store', 'float', 'x_offset', '0.0', 'Offset along X'),
-    ('--y-scale', 'store', 'float', 'y_scale', '1.0', 'Scale factor Y'), 
-    ('--y-offset', 'store', 'float', 'y_offset', '0.0', 'Offset along Y'),
-    ('--a-offset', 'store', 'float', 'a_offset', '0.0', 'Angular offset along rotational axis'),
-   
-    ('--xy-feed', 'store', 'float', 'xy_feed', '10.0', 'XY axis feed rate in unit/s'),
-    ('--z-feed', 'store', 'float', 'z_feed', '10.0', 'Z axis feed rate in unit/s'),
-    ('--a-feed', 'store', 'float', 'a_feed', '60.0', 'A axis feed rate in deg/s'),
-    ('--z-safe', 'store', 'float', 'z_safe', '5.0', 'Z axis safe height for rapid moves'),
-    
-    ('--brush-reload', 'store', 'inkbool', 'brush_reload', True, 'Enable brush reload.'),
-    ('--brushstroke-max', 'store', 'float', 'brushstroke_max', '10', 'Maximum brushstroke distance.'),
-    ('--brushstroke-overlap', 'store', 'float', 'brushstroke_overlap', '0', 'Brushstroke overlap.'),
-    ('--brush-dwell', 'store', 'float', 'brush_dwell', '0', 'Brush reload time (seconds).'),
-    ('--brush-reload-angle', 'store', 'float', 'brush_reload_angle', '90', 'Brush reload angle (degrees).'),
-   
-    ('--directory', 'store', 'string', 'directory', '~', 'Directory for gcode file'),
-    ('--filename', 'store', 'string', 'filename', '-1.0', 'File name'), 
-    ('--append-suffix', 'store', 'inkbool', 'append_suffix', True, 'Append auto-incremented numeric suffix to filename'), 
-    ('--create-log', 'store', 'inkbool', 'log_create_log', True, 'Create log files'),
-    ('--log-level', 'store', 'string', 'log_level', 'DEBUG', 'Log level'),
-    ('--log-filename', 'store', 'string', 'log_filename', 'tcnc.log', 'Full pathname of log file'),
-   
-    ('--preview-show', 'store', 'inkbool', 'preview_show', True, 'Show generated cut paths on preview layer.'),
-    ('--debug-layer', 'store', 'inkbool', 'debug_layer', True, 'Create debug layer.'),
-    ('--debug-biarcs', 'store', 'inkbool', 'debug_biarcs', True, ''),
-   
-    ('--z-depth', 'store', 'float', 'z_depth', '-0.125', 'Z full depth of cut'),
-    ('--z-step', 'store', 'float', 'z_step', '-0.125', 'Z cutting step depth'),
-    ('--path-to-gcode-order','store', 'string', 'path_to_gcode_order', 'path by path', 'Defines cutting order path by path or layer by layer.'), 
-    ('--path-to-gcode-depth-function','store', 'string', 'path_to_gcode_depth_function', 'zd', 'Path to gcode depth function.'),
-    ('--biarc-max-split-depth', 'store', 'int', 'biarc_max_split_depth', '4', 'Defines maximum depth of splitting while approximating using biarcs.'),
-)
 
 class TCnc(svg.SuperEffect):
     '''Inkscape plugin that converts selected SVG elements into gcode suitable for a
@@ -158,7 +112,7 @@ class TCnc(svg.SuperEffect):
 
         # Add a transform to the preview layer to flip the coordinates
         # from cartesian to SVG (flip Y axis from lower left to upper left).
-        page_height = float(self.docroot.get('height'))
+        (page_width, page_height) = self.get_document_size()
         #page_width = float(self.docroot.get('width'))
         flip_transform_attr = 'translate(0, %f) scale(1, -1)' % page_height
         self.preview_layer.set('transform', flip_transform_attr)
@@ -224,16 +178,20 @@ class TCnc(svg.SuperEffect):
                                                        max_depth=biarc_max_depth,
                                                        line_flatness=line_flatness)
                     cutpath.extend(biarcs)
+            # The cutpath is a tuple ('path-id', path_list)
             cutpath_list.append((node.get('id'), cutpath))
         
         # Sort the cutpaths to minimize fast tool moves
-        cutpath_list = self.sort_cutpaths(cutpath_list)
+        if self.options.sort_paths:
+            cutpath_list = self.sort_cutpaths(cutpath_list)
         return cutpath_list
     
     def sort_cutpaths(self, cutpath_list):
         '''Sort the cutpaths to minimize tool movements.'''
         # TODO: use a better sort method...
-        return sorted(cutpath_list, key=lambda cp: cp[1][0].p1.x * cp[1][0].p1.y)
+        cutpath_list.sort(key=lambda cp: cp[1][0].p1.x)
+        cutpath_list.sort(key=lambda cp: cp[1][0].p1.y)
+        return cutpath_list
     
     def draw_preview_line(self, p1, p2, style_id=None):
         '''Draw an SVG line path on to the preview layer'''
@@ -421,6 +379,55 @@ class TCnc(svg.SuperEffect):
         except Exception:
             inkex.errormsg("Can't write to file: %s" % path)
         
+
+option_info = (
+    ('--active-tab', '', 'store', 'string', 'active_tab', '', ''),
+    
+    ('--units', '', 'store', 'string', 'units', 'in', 'Document units.'),
+    ('--auto-select-paths', '', 'store', 'inkbool', 'auto_select_paths', True, 'Select all paths if nothing is selected.'),
+    ('--biarc-tolerance', '', 'store', 'float', 'biarc_tolerance', '1', 'Biarc approximation fitting tolerance.'),                
+    ('--biarc-maxdepth', '', 'store', 'float', 'biarc_max_depth', '4', 'Biarc approximation maximum curve splitting recursion depth.'),                
+    ('--line-flatness', '', 'store', 'float', 'line_flatness', '0.5', 'Curve to line flatness.'),                
+    ('--min-arc-radius', '', 'store', 'float', 'min_arc_radius', '.01', 'All arcs having radius less than minimum will be considered as straight line'),
+    ('--sort-paths', '', 'store', 'inkbool', 'sort_paths', True, 'Sort paths to minimize rapid moves.'),
+
+    ('--origin-ref', '', 'store', 'string', 'origin_ref', 'paper', 'Lower left origin reference.'),
+    ('--z-scale', '', 'store', 'float', 'z_scale', '1.0', 'Scale factor Z'), 
+    ('--z-offset', '', 'store', 'float', 'z_offset', '0.0', 'Offset along Z'),
+    ('--x-scale', '', 'store', 'float', 'x_scale', '1.0', 'Scale factor X'), 
+    ('--x-offset', '', 'store', 'float', 'x_offset', '0.0', 'Offset along X'),
+    ('--y-scale', '', 'store', 'float', 'y_scale', '1.0', 'Scale factor Y'), 
+    ('--y-offset', '', 'store', 'float', 'y_offset', '0.0', 'Offset along Y'),
+    ('--a-offset', '', 'store', 'float', 'a_offset', '0.0', 'Angular offset along rotational axis'),
+   
+    ('--xy-feed', '', 'store', 'float', 'xy_feed', '10.0', 'XY axis feed rate in unit/s'),
+    ('--z-feed', '', 'store', 'float', 'z_feed', '10.0', 'Z axis feed rate in unit/s'),
+    ('--a-feed', '', 'store', 'float', 'a_feed', '60.0', 'A axis feed rate in deg/s'),
+    ('--z-safe', '', 'store', 'float', 'z_safe', '5.0', 'Z axis safe height for rapid moves'),
+    
+    ('--brush-reload', '', 'store', 'inkbool', 'brush_reload', True, 'Enable brush reload.'),
+    ('--brushstroke-max', '', 'store', 'float', 'brushstroke_max', '10', 'Maximum brushstroke distance.'),
+    ('--brushstroke-overlap', '', 'store', 'float', 'brushstroke_overlap', '0', 'Brushstroke overlap.'),
+    ('--brush-dwell', '', 'store', 'float', 'brush_dwell', '0', 'Brush reload time (seconds).'),
+    ('--brush-reload-angle', '', 'store', 'float', 'brush_reload_angle', '90', 'Brush reload angle (degrees).'),
+   
+    ('--directory', '', 'store', 'string', 'directory', '~', 'Directory for gcode file'),
+    ('--filename', '', 'store', 'string', 'filename', '-1.0', 'File name'), 
+    ('--append-suffix', '', 'store', 'inkbool', 'append_suffix', True, 'Append auto-incremented numeric suffix to filename'), 
+    ('--create-log', '', 'store', 'inkbool', 'log_create_log', True, 'Create log files'),
+    ('--log-level', '', 'store', 'string', 'log_level', 'DEBUG', 'Log level'),
+    ('--log-filename', '', 'store', 'string', 'log_filename', 'tcnc.log', 'Full pathname of log file'),
+   
+    ('--preview-show', '', 'store', 'inkbool', 'preview_show', True, 'Show generated cut paths on preview layer.'),
+    ('--debug-layer', '', 'store', 'inkbool', 'debug_layer', True, 'Create debug layer.'),
+    ('--debug-biarcs', '', 'store', 'inkbool', 'debug_biarcs', True, ''),
+   
+    ('--z-depth', '', 'store', 'float', 'z_depth', '-0.125', 'Z full depth of cut'),
+    ('--z-step', '', 'store', 'float', 'z_step', '-0.125', 'Z cutting step depth'),
+    ('--path-to-gcode-order','', 'store', 'string', 'path_to_gcode_order', 'path by path', 'Defines cutting order path by path or layer by layer.'), 
+    ('--path-to-gcode-depth-function', '', 'store', 'string', 'path_to_gcode_depth_function', 'zd', 'Path to gcode depth function.'),
+    ('--biarc-max-split-depth', '', 'store', 'int', 'biarc_max_split_depth', '4', 'Defines maximum depth of splitting while approximating using biarcs.'),
+)
 
 tcnc = TCnc(option_info)
 tcnc.affect()

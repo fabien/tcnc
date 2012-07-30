@@ -20,7 +20,6 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 '''
 import logging
 import math
-import sys
 
 import inkex
 import simpletransform
@@ -36,9 +35,10 @@ class SuperEffect(inkex.Effect):
     more handy methods for generating SVG and traversing the inkscape document.
     '''
     
-    current_layer = None
+#    current_layer = None
     layer_cache = {}
     layer_stack = []
+    doc_size = None
 
         
     def __init__(self, option_info=None, *args, **kwargs):
@@ -48,9 +48,9 @@ class SuperEffect(inkex.Effect):
         
         if option_info:
             for opt in option_info:
-                self.OptionParser.add_option(opt[0], action=opt[1],
-                                             type=opt[2], dest=opt[3],
-                                             default=opt[4], help=opt[5])
+                self.OptionParser.add_option(opt[0], opt[1], action=opt[2],
+                                             type=opt[3], dest=opt[4],
+                                             default=opt[5], help=opt[6])
 
 
     def get_canonical_doc_units(self):
@@ -82,6 +82,14 @@ class SuperEffect(inkex.Effect):
         document unit coordinates'''
         return 1.0 / inkex.uuconv[units]
     
+    def get_document_size(self):
+        '''Return width and height of document as a tuple (W, H).'''
+        if not self.doc_size:
+            x = inkex.unittouu(self.document.getroot().get('width'))
+            y = inkex.unittouu(self.document.getroot().get('height'))
+            self.doc_size = (x, y)
+        return self.doc_size
+                
     def find_layer(self, layer_name):
         '''Find and return the layer whose layer name (label) is <layer_name>.
         Returns None if none found.
@@ -177,6 +185,7 @@ class SuperEffect(inkex.Effect):
                         { 'd': d, 'style': style, 'transform': transform, })
         return marker
     
+
 def flatten_nodetree(nodetree, mtransform=[[1.0, 0.0, 0.0],[0.0, 1.0, 0.0]],
                      parent_visibility='visible', skip_layers=None, nodelist=None):
     '''Recursively traverse an SVG node tree and flatten it to a list of 
