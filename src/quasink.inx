@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+
+    <name>Quasink</name>
+    
+    <id>com.utlco.quasink</id>
+    
+	<dependency type="executable" location="extensions">tcnc/quasink.py</dependency>
+	<dependency type="executable" location="extensions">inkex.py</dependency>
+	
+	<param name="active-tab" type="notebook">
+
+		<page name="quasi" _gui-text="Quasi">	
+            <param name="mid-skinny" type="optiongroup" appearance="minimal" _gui-text="Midpoint type for skinny diamonds:">
+                <_option value="0">0: midpoints not connected</_option>
+                <_option value="1">1: acute angle sides joined</_option>
+                <_option value="2">2: obtuse angle sides joined</_option>
+                <_option value="3">3: opposite sides joined to make cross</_option>
+                <_option value="4">4: all sides joined to make rectangle</_option>
+                <_option value="5">5: randomly choose 1 or 2</_option>
+                <_option value="6">6: randomly choose 1, 2, or 4</_option>
+            </param>
+            <param name="mid-fat" type="optiongroup" appearance="minimal" _gui-text="Midpoint type for fat diamonds:">
+                <_option value="0">0: midpoints not connected</_option>
+                <_option value="1">1: acute angle sides joined</_option>
+                <_option value="2">2: obtuse angle sides joined</_option>
+                <_option value="3">3: opposite sides joined to make cross</_option>
+                <_option value="4">4: all sides joined to make rectangle</_option>
+                <_option value="5">5: randomly choose 1 or 2</_option>
+                <_option value="6">6: randomly choose 1, 2, or 4</_option>
+            </param>
+            <param name="symmetry" type="int" min="0" max="100" _gui-text="Degrees of symmetry:">5</param>
+            <param name="numlines" type="int" min="0" max="100" _gui-text="Number of vector lines:">30</param>
+			<param name="scale" type="float" min="0.0" max="100.0" _gui-text="Output scale:">1.0</param>
+            <param name="flip" type="boolean" _gui-text="Flip by 90 deg:">false</param>
+            <param name="clip-poly" type="boolean" _gui-text="Clip segments to page:">True</param>
+		</page>
+		
+        <page name="polygons" _gui-text="Polygon Layer">
+            <param name="draw-polygons" type="boolean" _gui-text="Draw polygons:">true</param>
+            <param name="fillon" type="boolean" _gui-text="Fill polygons:">false</param>
+            <param name="colorfill" type="boolean" _gui-text="Use color fill (otherwise grayscale):">false</param>
+            <param name="zfill" type="boolean" _gui-text="Polygon type determines fill color:">false</param>
+            <param name="polygon-stroke" type="string" _gui-text="CSS stroke color:">#666666</param>
+            <param name="polygon-stroke-width" type="string" _gui-text="CSS stroke width:">.5pt</param>
+        </page>
+ 
+        <page name="segments" _gui-text="Segment Layer">   
+            <param name="draw-segments" type="boolean" _gui-text="Draw segments:">true</param>
+            <param name="segment-stroke" type="string" _gui-text="CSS stroke color:">#333333</param>
+            <param name="segment-stroke-width" type="string" _gui-text="CSS stroke width:">.5pt</param>
+        </page>
+
+        <page name="paths" _gui-text="Path Layer">   
+            <param name="make-paths" type="boolean" _gui-text="Chain segments into paths:">True</param>
+            <param name="min-segments" type="int" min="0" max="10000" _gui-text="Min segments in path:">1</param>
+            <param name="closed-paths" type="boolean" _gui-text="Draw only closed paths:">False</param>
+            <param name="open-path-stroke" type="string" _gui-text="Open path CSS stroke color:">#0000ff</param>
+            <param name="open-path-stroke-width" type="string" min="0.0" max="100.0" _gui-text="Open path CSS stroke width:">1pt</param>
+            <param name="closed-path-stroke" type="string" _gui-text="Closed path CSS stroke color:">#ff0000</param>
+            <param name="closed-path-fill" type="string" _gui-text="Closed path CSS fill color:">#ffffab</param>
+            <param name="closed-path-stroke-width" type="string" min="0.0" max="100.0" _gui-text="Closed path CSS stroke width:">1pt</param>
+        </page>
+
+        <page name="debug" _gui-text="Debug">
+            <param name="create-log" type="boolean" _gui-text="Generate log file:">false</param>            
+            <param name="log-level" type="optiongroup" appearance="minimal" _gui-text="Log level:">
+                <_option value="DEBUG">Debug</_option>
+                <_option value="INFO">Info</_option>
+                <_option value="WARNING">Warning</_option>
+                <_option value="ERROR">Error</_option>
+                <_option value="CRITICAL">Critical</_option>
+            </param>
+            <param name="log-filename" type="string" _gui-text="Full path to log file:">~/quasink.log</param>
+        </page>
+
+		<page name="about" _gui-text="About">
+			<_param name="about-text" type="description">
+Quasink Version 0.1
+Based on Eric Weeks quasi.c and quasi_colour.c:
+http://www.physics.emory.edu/~weeks/software/quasic.html
+			</_param>
+		</page>
+		
+	</param>	
+    <effect needs-live-preview="false">
+		<effects-menu>
+			<submenu _name="Quasink"/>
+		</effects-menu>
+		<object-type>path</object-type>
+    </effect>
+    <script>
+        <command reldir="extensions" interpreter="python">tcnc/quasink.py</command>
+    </script>
+</inkscape-extension>
