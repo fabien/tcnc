@@ -19,6 +19,15 @@ I suggest taking a look at the Eggbot extension as well.
 Documentation about Inkscape extensions is poor
 and the best way to learn how to write one is to look at previous attempts.
 
+Includes Quasink!
+-----------------
+Quasink is an Inkscape extension that produces Penrose tesselations. It is based on
+quasi.c by Eric R. Weeks.
+See http://www.physics.emory.edu/~weeks/software/quasic.html for more info.
+The underlying algorithm is just a python translation of quasi.c but also includes
+some extra features such as creating paths by chaining individual segments. It also
+implements the coloring feature of quasi_colour.c (also available on Eric's website.)
+
 Installing tcnc
 ---------------
 ### For Mac OS X and Linux:
