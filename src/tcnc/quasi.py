@@ -8,7 +8,6 @@ Mostly unchanged except to make it a little more pythonic...
 
 import math
 from optparse import OptionParser
-from Carbon.Aliases import false
 
 def quasi(zfill, midon, symmetry, maxmax, plotter):
 	vx = []
@@ -158,7 +157,7 @@ class QuasiPlotter(object):
 	''''''
 	fill_color = 1.0
 	stroke_color = 0.0
-	use_color = false
+	use_color = False
 	
 	def set_fill_color(self, fill_color):
 		self.fill_color = fill_color
@@ -173,6 +172,7 @@ class QuasiPlotter(object):
 		return self.stroke_color
 	
 	def get_fill_color_rgb(self):
+		# Based on quasi_colour.c by S.J. King zh84@lycos.com
 		if self.use_color:
 			phi = self.fill_color * 2.0 * math.pi
 			theta = (math.pi / 2.0) * math.sin(3.0 * phi) + math.pi / 2.0
