@@ -2,7 +2,7 @@
 
 <inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
 
-    <name>TCNC G Code</name>
+    <name>Generate G Code</name>
     
     <id>com.utlco.tcnc</id>
     
@@ -32,33 +32,40 @@
 			<param name="a-offset" type="float" precision="5" _gui-text="A offset (deg):">0.0</param>
 		</page>
 		
-		<page name="tool" _gui-text="Tool">
-			<param name="xy-feed" type="float" precision="2" min="0" max="1000" _gui-text="XY feed rate:">400.0</param>
-			<param name="z-feed" type="float" precision="2" min="0" max="1000" _gui-text="Z feed rate:">400.0</param>
-			<param name="a-feed" type="float" precision="2" min="0" max="1000" _gui-text="A feed rate (deg/sec):">60.0</param>
-			<param name="z-safe" type="float" precision="4" min="-1000" max="1000" _gui-text="Z safe height:">5</param>
-        </page>
-
         <page name="brush" _gui-text="Brush">
+            <param name="brush-overshoot-enabled" type="boolean" _gui-text="Enable brushstroke overshoot:">false</param>
+            <param name="brush-overshoot" type="float" precision="4" min="0" max="1000" _gui-text="Brushstroke overshoot distance:">7</param>
+            <param name="desc1" type="description">---</param>
+            <param name="brush-flip-path" type="boolean" _gui-text="Flip brush after every path:">false</param>
+            <param name="brush-flip-reload" type="boolean" _gui-text="Flip brush after reload:">false</param>
+            <param name="desc3" type="description">---</param>
             <param name="brush-reload" type="boolean" _gui-text="Enable brush reload:">false</param>
+            <param name="brush-reload-path" type="boolean" _gui-text="Force reload after every path:">false</param>
             <param name="brushstroke-max" type="float" precision="2" min="0" max="1000" _gui-text="Max brushstroke distance:">7</param>
             <param name="brushstroke-overlap" type="float" precision="2" min="0" max="1000" _gui-text="Brushstroke overlap:">.5</param>
             <param name="brush-dwell" type="float" precision="1" _gui-text="Brush reload time (seconds):">5</param>
-            <param name="brush-reload-angle" type="float" precision="2" _gui-text="Brush reload angle (degrees):">90</param>
+            <param name="brush-reload-angle" type="float" precision="2" min="-360" max="360" _gui-text="Brush reload angle (degrees):">90</param>
+            <param name="brush-size" type="float" precision="2" min="0" max="1000" _gui-text="Brush size:">0</param>
 		</page>
 
-        <page name="gcode" _gui-text="G Code">
+        <page name="gcode" _gui-text="Tool / G Code">
             <param name="units" type="optiongroup" appearance="minimal" _gui-text="Units:">
                 <_option value="doc">use document units</_option>
                 <_option value="in">inch</_option>
                 <_option value="mm">mm</_option>
             </param>
+            <param name="xy-feed" type="float" precision="2" min="0" max="1000" _gui-text="XY feed rate:">400.0</param>
+            <param name="z-feed" type="float" precision="2" min="0" max="1000" _gui-text="Z feed rate:">400.0</param>
+            <param name="a-feed" type="float" precision="2" min="0" max="1000" _gui-text="A feed rate (deg/sec):">60.0</param>
+            <param name="z-safe" type="float" precision="4" min="-1000" max="1000" _gui-text="Z safe height:">5</param>
+            <param name="z-wait" type="float" precision="3" min="0" max="1000" _gui-text="Z axis wait (milliseconds):">500</param>
         </page>
 
 		<page name="output" _gui-text="Output">
 			<param name="directory" type="string" _gui-text="Directory:">~</param>
 			<param name="filename" type="string" _gui-text="File name:">output.ngc</param>
-			<param name="append-suffix" type="boolean" _gui-text="Add numeric suffix to filename">true</param>
+			<param name="append-suffix" type="boolean" _gui-text="Add numeric suffix to filename:">true</param>
+            <param name="separate-layers" type="boolean" _gui-text="Separate gcode file per layer:">false</param>
 
             <param name="debug-layer" type="boolean" _gui-text="Create debug layer:">false</param>
 			<param name="create-log" type="boolean" _gui-text="Generate log file:">false</param>			
