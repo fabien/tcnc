@@ -34,11 +34,10 @@ class SuperEffect(inkex.Effect):
     '''Sort of a beefed up version of inkex.Effect that includes
     more handy methods for generating SVG and traversing the inkscape document.
     '''
-    
-#    current_layer = None
     layer_cache = {}
     layer_stack = []
     doc_size = None
+    doc_units = None
 
         
     def __init__(self, option_info=None, *args, **kwargs):
@@ -46,6 +45,7 @@ class SuperEffect(inkex.Effect):
         # Unfortunately inkex.EFfect is declared using old syntax so use old-style init
         inkex.Effect.__init__(self, *args, **kwargs)
         
+        # Derived class options will override defaults.
         if option_info:
             for opt in option_info:
                 self.OptionParser.add_option(opt[0], opt[1], action=opt[2],
@@ -67,28 +67,37 @@ class SuperEffect(inkex.Effect):
         
     def get_document_units(self):
         '''Return the Inkscape document units (in, mm, etc.).'''
-#        basedoc = self.document.xpath('//sodipodi:namedview[@id="base"]',
-#                                      namespaces=inkex.NSS)
-        basedoc = self.getNamedView()
-        units = None
-        if basedoc is not None:
-            units = basedoc.get(inkex.addNS('document-units', 'inkscape'))
-            if units is None:
-                units = basedoc.get('units')
-        return units
+        if self.doc_units is None:
+#            basedoc = self.document.xpath('//sodipodi:namedview[@id="base"]', namespaces=inkex.NSS)
+            basedoc = self.getNamedView()
+            if basedoc is not None:
+                self.doc_units = basedoc.get(inkex.addNS('document-units', 'inkscape'))
+                if self.doc_units is None:
+                    self.doc_units = basedoc.get('units')
+        return self.doc_units
     
     def get_unit_scale(self, units):
         '''Return the scale factor to scale SVG coordinates to
-        document unit coordinates'''
+        document unit coordinates.
+        '''
         return 1.0 / inkex.uuconv[units]
     
     def get_document_size(self):
-        '''Return width and height of document as a tuple (W, H).'''
+        '''Return width and height of document in SVG units as a tuple (W, H).
+        '''
         if not self.doc_size:
             x = inkex.unittouu(self.document.getroot().get('width'))
             y = inkex.unittouu(self.document.getroot().get('height'))
             self.doc_size = (x, y)
         return self.doc_size
+    
+    def get_document_width(self):
+        '''Return width of document in SVG units.'''
+        return self.get_document_size()[0]
+                
+    def get_document_height(self):
+        '''Return height of document in SVG units.'''
+        return self.get_document_size()[1]
                 
     def find_layer(self, layer_name):
         '''Find and return the layer whose layer name (label) is <layer_name>.
