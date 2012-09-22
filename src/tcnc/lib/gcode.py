@@ -36,13 +36,16 @@ TARGET_INFO = {'linuxcnc': ('LinuxCNC', '2.4+'),}
 
 _MAXFLOAT = sys.float_info.max
 
+DEFAULT_TRAJECTORY_MODE = 'G64'
 DEFAULT_TRAJECTORY_TOLERANCE = 0.0
 
 class GCode(object):
     '''
     Note: Angles are always specified in radians but output as degrees.
+    Except for offsets for any rotational axes which are speicified in
+    machine coordinates - ie degrees.
     '''
-    # Order in which G code parameters are presented
+    # Order in which G code parameters are written to output file
     _gcode_ordered_params = 'XYZUVWABCIJKRDHLPQSF'
     
     # Non-modal G codes (LinuxCNC.)
@@ -55,8 +58,6 @@ class GCode(object):
         self.tolerance = tolerance
         # Tolerance for angle comparisons
         self.atolerance = atolerance
-        # Trajectory plan tolerance (G64 P value). -1 ==> Exact path mode
-        self.trajectory_tolerance = DEFAULT_TRAJECTORY_TOLERANCE
         # Safe height of Z axis (for tool up)
         self.zsafe = zsafe
         # Default Z axis feed rate
@@ -75,6 +76,9 @@ class GCode(object):
         self.show_comments = True
         # Show line numbers if True
         self.show_line_numbers = False
+        # Trajectory planning mode and blend tolerance
+        self.trajectory_mode = DEFAULT_TRAJECTORY_MODE
+        self.trajectory_tolerance = DEFAULT_TRAJECTORY_TOLERANCE
         
         # Current angle of the rotational axis in radians
         self.current_angle = 0.0
@@ -160,13 +164,11 @@ class GCode(object):
         self.addline('G90', 'Use absolute positioning')
         self.addline('G40', 'Cancel tool diameter compensation')
         self.addline('G49', 'Cancel tool length compensation')
-        if self.trajectory_tolerance < 0.0:
-            self.addline('G61', 'Trajectory plan: exact path')
-        elif self.trajectory_tolerance > 0.0:
+        if self.trajectory_mode == 'G64P':
             self.addline('G64 P%.4f' % self.trajectory_tolerance,
                          'Trajectory plan: blend with tolerance')
         else:
-            self.addline('G64', 'Trajectory plan: blend without tolerance')
+            self.addline(self.trajectory_mode, 'Trajectory planning mode')
     
     def default_footer(self):
         '''Output a default G code file footer.'''
