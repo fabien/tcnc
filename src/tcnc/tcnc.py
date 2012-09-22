@@ -29,10 +29,9 @@ import inkex
 import cubicsuperpath
 import simpletransform
 
-import lib
 from lib import svg
 from lib import geom
-import gcode
+from lib import gcode
 
 from lib.geom import P, CubicBezier
 
@@ -51,8 +50,9 @@ class TCnc(svg.SuperEffect):
     '''
     styles = {
               'simple': 'fill:none;stroke:#cccc99;stroke-width:0.25pt;stroke-opacity:1',
+              'brushline': 'fill:none;stroke:#0000ff;stroke-width:0.5pt;stroke-opacity:1',
               'cutline': 'fill:none;stroke:#c000c0;stroke-width:0.75pt;stroke-opacity:1;marker-end:url(#PreviewLineEnd0)',
-              'cutline_tiny': 'fill:none;stroke:#0000ff;stroke-width:1.0pt;stroke-opacity:1',
+              'cutline1': 'fill:none;stroke:#ff00ff;stroke-width:1pt;stroke-opacity:1;',
               'cutarc0': 'fill:none;stroke:#ff0000;stroke-width:0.75pt;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;marker-end:url(#PreviewLineEnd0)',
               'cutarc1': 'fill:none;stroke:#ff0000;stroke-width:0.75pt;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;marker-end:url(#PreviewLineEnd1)',
               'cutpath_end_marker': 'fill-rule:evenodd;fill:#FFFFFF;stroke:#ff0000;stroke-width:1.0pt;marker-start:none',
@@ -61,7 +61,7 @@ class TCnc(svg.SuperEffect):
               'moveline': 'fill:none;stroke:#00ff00;stroke-width:1pt;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1;stroke-miterlimit:4;stroke-dasharray:1.2, 5;stroke-dashoffset:0;marker-end:url(#PreviewLineEnd2)',
               }
         
-    last_point = (0.0, 0.0)
+    last_point = P(0.0, 0.0)
             
     def effect(self):
         '''Main entry point for Inkscape plugins.
@@ -72,8 +72,6 @@ class TCnc(svg.SuperEffect):
             log_level = getattr(logging, self.options.log_level, DEFAULT_LOG_LEVEL)
             logging.basicConfig(filename=log_path, filemode='w', level=log_level)
         
-        self.docroot = self.document.getroot()
-        
         if self.options.units == 'doc':
             self.units = self.get_document_units()
             if self.units not in ('in', 'mm'):
@@ -82,6 +80,12 @@ class TCnc(svg.SuperEffect):
         else:
             self.units = self.options.units
         
+        unit_scale = inkex.uuconv[self.units]
+        self.brush_size = self.options.brush_size * unit_scale
+        self.biarc_tolerance = self.options.biarc_tolerance * unit_scale
+        self.biarc_max_depth = self.options.biarc_max_depth
+        self.line_flatness = self.options.line_flatness * unit_scale
+        
         # Create the SVG for the line end markers used in preview layer
         self.create_inkscape_markers()
             
@@ -89,7 +93,7 @@ class TCnc(svg.SuperEffect):
         rootnodes = self.selected.values()
         if not rootnodes:
             # Use entire document if nothing is selected
-            rootnodes = self.docroot
+            rootnodes = self.document.getroot()
         
         # Clear out the old preview layer if any
         self.clear_layer(PREVIEW_LAYER_NAME)
@@ -112,7 +116,7 @@ class TCnc(svg.SuperEffect):
 
         # Add a transform to the preview layer to flip the coordinates
         # from cartesian to SVG (flip Y axis from lower left to upper left).
-        (page_width, page_height) = self.get_document_size()
+        page_height = self.get_document_size()[1]
         #page_width = float(self.docroot.get('width'))
         flip_transform_attr = 'translate(0, %f) scale(1, -1)' % page_height
         self.preview_layer.set('transform', flip_transform_attr)
@@ -123,7 +127,10 @@ class TCnc(svg.SuperEffect):
         
         # Generate and export G code
         gc = self.generate_gcode(cutpath_list)
-        self.export_gcode(gc)
+        try:
+            self.export_gcode(gc)
+        except IOError, e:
+            inkex.errormsg(str(e))
             
             
     def create_inkscape_markers(self):
@@ -141,10 +148,6 @@ class TCnc(svg.SuperEffect):
         '''Process the SVG shape elements and generate G code.
         Return a list of cut paths as SVG path elements.
         '''
-        biarc_tolerance = float(self.options.biarc_tolerance)
-        biarc_max_depth = float(self.options.biarc_max_depth)
-        line_flatness = float(self.options.line_flatness)
-
         cutpath_list = []
         for node, layer_transform in shapelist:
             # Convert the shape element to a simplepath
@@ -173,10 +176,11 @@ class TCnc(svg.SuperEffect):
                 for i in range(1,len(subcsp)):
                     sp1 = subcsp[i-1]
                     sp2 = subcsp[i]
-                    curve = CubicBezier(P(sp1[1]), P(sp1[2]), P(sp2[0]), P(sp2[1]))
-                    biarcs = curve.biarc_approximation(tolerance=biarc_tolerance,
-                                                       max_depth=biarc_max_depth,
-                                                       line_flatness=line_flatness)
+                    curve = CubicBezier(P(sp1[1]), P(sp1[2]),
+                                        P(sp2[0]), P(sp2[1]))
+                    biarcs = curve.biarc_approximation(tolerance=self.biarc_tolerance,
+                                                       max_depth=self.biarc_max_depth,
+                                                       line_flatness=self.line_flatness)
                     cutpath.extend(biarcs)
             # The cutpath is a tuple ('path-id', path_list)
             cutpath_list.append((node.get('id'), cutpath))
@@ -193,23 +197,37 @@ class TCnc(svg.SuperEffect):
         cutpath_list.sort(key=lambda cp: cp[1][0].p1.y)
         return cutpath_list
     
-    def draw_preview_line(self, p1, p2, style_id=None):
+    def draw_preview_line(self, p1, p2, style_id, angle=None):
         '''Draw an SVG line path on to the preview layer'''
-        if style_id is None:
-            style_id = 'simple'     
         self.create_line(p1[0], p1[1], p2[0], p2[1], self.styles[style_id])
+        if angle is not None:
+            self.draw_preview_brushline(p2, angle)
     
-    def draw_preview_arc(self, p1, r, sweep_flag, p2, style_id):
+    def draw_preview_arc(self, p1, r, sweep_flag, p2, style_id, angle=None):
         '''Draw an SVG arc on to the preview layer'''
         attrs = { 'd': 'M %5f %5f A %5f %5f 0.0 0 %d %5f %5f' % \
                  (p1[0], p1[1], r, r, sweep_flag, p2[0], p2[1]),
                  'style': self.styles[style_id + str(sweep_flag)] }
         self.create_path(attrs)
+        if angle is not None:
+            self.draw_preview_brushline(p2, angle)
         
-    def draw_preview_path(self, d, style_id):
-        '''Draw an SVG path on the preview layer'''
-        attrs = { 'd': d, 'style': self.styles[style_id]}
-        self.create_path(attrs)
+    def draw_preview_brushline(self, p, angle):
+        '''Draw a line showing the brush width and angle.
+        :p: midpoint
+        :angle: angle tangent to brush line
+        '''
+        if self.brush_size > 0.0:
+            r = self.brush_size / 2
+            p1 = p + P.from_polar(r, angle - (math.pi / 2))
+            p2 = p + P.from_polar(r, angle + (math.pi / 2))
+            self.create_line(p1[0], p1[1], p2[0], p2[1], self.styles['brushline'])
+        
+        
+#    def draw_preview_path(self, d, style_id):
+#        '''Draw an SVG path on the preview layer'''
+#        attrs = { 'd': d, 'style': self.styles[style_id]}
+#        self.create_path(attrs)
 
     def draw_preview_dot(self, x, y, size='small', color='#000000'):
         '''Draw an SVG dot (a small filled circle) at the specified location'''
@@ -223,22 +241,44 @@ class TCnc(svg.SuperEffect):
                     zsafe=float(self.options.z_safe),
                     zfeed=float(self.options.z_feed),
                     xyfeed=float(self.options.xy_feed),
-                    afeed=float(self.options.a_feed),
+                    afeed=float(self.options.a_feed * 60),
                     )
+        gc.set_axis_offset('X', self.options.x_offset)
+        gc.set_axis_offset('Y', self.options.y_offset)
+        gc.set_axis_offset('Z', self.options.z_offset)
+        gc.set_axis_offset('A', (math.pi / 2) + self.options.a_offset)
+        gc.set_axis_scale('X', self.options.x_scale)
+        gc.set_axis_scale('Y', self.options.y_scale)
+        gc.set_axis_scale('Z', self.options.z_scale)
+        gc.set_axis_scale('A', self.options.a_scale)
         gc.set_unit_scale(self.get_unit_scale(self.units))
         # Cumulative tool cutting distance
         self.feed_distance = 0.0
         # Maximum distance before a brush reload
         self.max_feed_distance = self.options.brushstroke_max * inkex.uuconv[self.units]
         
+        # Brush overshoot distance
+        self.brush_overshoot = self.options.brush_overshoot * inkex.uuconv[self.units]
+        
         gc.default_header(units=self.units,
                           description=('Generated by TCNC Inkscape extension version %s' % VERSION,))
+        
         for cutpath in cutpath_list:
             gc.addline()
             gc.comment('SVG Path: id="%s"' % cutpath[0])
             self.generate_cutpath_gcode(gc, cutpath[1])
+            # If brush flip is enabled then rotate the brush 180deg.
+            if self.options.brush_flip_path:
+                self.flip_brush(gc)
         gc.default_footer()
         return gc
+    
+    
+    brush_flipped = -1
+    def flip_brush(self, gc):
+        # Offset brush rotation by 180deg.
+        self.brush_flipped *= -1 # Toggle rotation direction
+        gc.offset['A'] += self.brush_flipped * 180
 
     def generate_cutpath_gcode(self, gc, cutpath, depth=0):
         """Generate G code for the given cutpath.
@@ -270,6 +310,10 @@ class TCnc(svg.SuperEffect):
         self.draw_preview_line(self.last_point, cutpath[0].p1, 'moveline')            
         self.last_point = geom.P(cutpath[0].p1)
         
+        # Pause to reload the brush if enabled
+        if self.options.brush_reload and self.options.brush_reload_path:
+            self.generate_brush_reload_gcode(gc, self.last_point, current_angle, None)
+            
         # Create G-code for each segment of the cutpath
         gc.tool_up()
         for segment in cutpath:
@@ -277,22 +321,29 @@ class TCnc(svg.SuperEffect):
             end = geom.P(segment.p2)
             self.last_point = geom.P(end)
             
+            # If enabled and the tool has traveled a specified distance since
+            # the last reload then pause the brush to allow paint reloading.
+            if self.options.brush_reload \
+            and self.max_feed_distance > 0.0 \
+            and self.feed_distance >= self.max_feed_distance:
+                self.generate_brush_reload_gcode(gc, end, current_angle, depth)
+                    
             if isinstance(segment, geom.Line):
                 # Calculate tool tangent angle for line
                 angle = (end - start).angle()
                 current_angle += calc_rotation(current_angle, angle)
-                if gc.is_tool_down:
-                    gc.feed_rotate(current_angle)
-                else:
+                if not gc.is_tool_down:
                     gc.rapid_move(start.x, start.y, a=current_angle)
-                    gc.tool_down(depth)
+                    gc.tool_down(depth, self.options.z_wait)
+#                else:
+#                    gc.feed_rotate(current_angle)
                 
                 seglen = start.distance(end)
                 if seglen > geom.EPSILON:
                     self.feed_distance += seglen
-                    gc.feed(end.x, end.y, depth)
+                    gc.feed(end.x, end.y, depth, current_angle)
                     # Add the line to the SVG preview layer
-                    self.draw_preview_line(start, end, 'cutline')
+                    self.draw_preview_line(start, end, 'cutline', current_angle)
                 
             elif isinstance(segment, geom.Arc):
                 # Calculate starting tool tangent angle
@@ -301,13 +352,13 @@ class TCnc(svg.SuperEffect):
                 else: # CCW
                     angle = (start - segment.center).angle() + math.pi/2
                 current_angle += calc_rotation(current_angle, angle)
-                if gc.is_tool_down:
-                    gc.feed_rotate(current_angle)   # Rotate to starting arc tangent
-                else:
+                if not gc.is_tool_down:
                     gc.rapid_move(start.x, start.y, a=current_angle)
-                    gc.tool_down(depth)
+                    gc.tool_down(depth, self.options.z_wait)
+#                else:
+#                    gc.feed_rotate(current_angle)   # Rotate to starting arc tangent
                 current_angle += segment.angle  # Endpoint tangent angle
-                gc.tool_down(depth)    
+                gc.tool_down(depth, self.options.z_wait)    
                 seglen = segment.length()
                 if seglen > geom.EPSILON:
                     self.feed_distance += seglen
@@ -317,29 +368,57 @@ class TCnc(svg.SuperEffect):
                     # Add the arc to the SVG preview layer
                     sweep_flag = 0 if segment.angle < 0 else 1
                     self.draw_preview_arc(start, segment.radius, sweep_flag,
-                                          end, 'cutarc')
+                                          end, 'cutarc', current_angle)
 
-            # If enabled and the tool has traveled a specified distance
-            # pause the brush to allow paint reloading.
-            if self.options.brush_reload and self.feed_distance >= self.max_feed_distance:
-                self.reload_brush_gcode(gc, end, current_angle, depth)
-                    
+        # If brush overshoot is enabled keep drawing past the last endpoint
+        # in the same direction for the specified overshoot distance.
+        if self.options.brush_overshoot_enabled:
+            end = self.generate_brush_overshoot_gcode(gc, end, current_angle, depth)
+            
         # Post-path G code
         gc.tool_up()
         gc.rehome_rotational_axis()
         return
     
-    def reload_brush_gcode(self, gc, stop_point, current_angle, depth):
+    def generate_brush_overshoot_gcode(self, gc, last_point, current_angle, depth):
+        '''Generate the G code for the brush overshoot vector.'''
+        # Calculate endpoint of overshoot segment
+        dx = math.cos(current_angle) * self.brush_overshoot
+        dy = math.sin(current_angle) * self.brush_overshoot
+        endp = last_point + (dx, dy)
+        gc.feed(endp.x, endp.y, depth)
+        self.feed_distance += self.brush_overshoot
+        # Show the overshoot on the SVG preview layer
+        self.draw_preview_line(last_point, endp, 'cutline1')
+        return endp
+            
+    def generate_brush_reload_gcode(self, gc, stop_point, current_angle, depth):
         '''Generate the G code for reloading the brush tool.'''
         gc.comment('Pause for brush reload')
-        gc.tool_up()
+        if self.options.brush_flip_reload:
+            self.flip_brush(gc)
+        #TODO: overshoot end of previous stroke to overlap next stroke
+        
+        if depth is not None:
+            gc.tool_up()
         # Rotate the brush to a position that makes it easy to add paint
-        gc.rapid_move(stop_point.x, stop_point.y, a=self.options.brush_reload_angle)
+        da = math.fmod(current_angle, 2*math.pi)
+        if math.fabs(da) < math.pi:
+            a = current_angle - da
+        elif da < 0:
+            a = current_angle - (2*math.pi + da)
+        else:
+            a = current_angle + (2*math.pi - da)
+        reload_angle = math.radians(self.options.brush_reload_angle) + a
+        gc.rapid_move(stop_point.x, stop_point.y, a=reload_angle)
         # Pause to add more paint to the brush
         gc.dwell(self.options.brush_dwell * 1000)
+        # TODO: backup brush to overlap previous stroke
+        
         # Rotate brush back to drawing angle
         gc.rapid_move(stop_point.x, stop_point.y, a=current_angle)
-        gc.tool_down(depth)
+        if depth is not None:
+            gc.tool_down(depth, self.options.z_wait)
         self.draw_preview_dot(stop_point.x, stop_point.y, color='#0000ff')
         # Reset the feed distance count
         self.feed_distance = 0.0        
@@ -348,36 +427,46 @@ class TCnc(svg.SuperEffect):
         '''Export the generated g code to a specified file.'''
         filedir = os.path.expanduser(self.options.directory)
         filename = os.path.basename(self.options.filename)
-        path = os.path.abspath(os.path.join(filedir, filename))
-        if self.options.append_suffix:
-            file_root, file_ext = os.path.splitext(filename)
-            # Get a list of existing files that match the numeric suffix.
-            # They should already be sorted.
-            filter_str = '%s_[0-9]*%s' % (file_root, file_ext)
-            files = fnmatch.filter(os.listdir(filedir), filter_str)
-            logging.debug('filter: %s [%s]' % (filter_str, str(files)))
-            if len(files) > 0:
-                # Get the suffix from the last one and add one to it.
-                # This seems overly complicated but it takes care of the case
-                # where the user deletes a file in the middle of the
-                # sequence which guarantees the newest file is always last.
-                last_file = files[-1]
-                file_root, file_ext = os.path.splitext(last_file)
-                try:
-                    suffix = int(file_root[-4:]) + 1
-                except Exception:
-                    suffix = 0
-                filename = file_root[:-4] + ('%04d' % suffix) + file_ext
-                path = os.path.join(filedir, filename)
-            else:
-                path = os.path.join(filedir, file_root + '_0000' + file_ext)
-#        logging.debug('path: %s' % path)
-        
         try:
-            with open(path, 'w') as f:
-                f.write(gc.gcode)
-        except Exception:
-            inkex.errormsg("Can't write to file: %s" % path)
+            gc.export(filedir, filename,
+                      append_suffix=self.options.append_suffix)
+        except IOError, e:
+            inkex.errormsg(str(e))
+#        file_root, file_ext = os.path.splitext(filename)
+#        if not file_ext:
+#            file_ext = '.ngc'
+#        if layer_name is not None:
+#            file_root += '-' + layer_name
+#        filename = file_root + file_ext
+#        path = os.path.abspath(os.path.join(filedir, filename))
+#        if self.options.append_suffix:
+#            # Get a list of existing files that match the numeric suffix.
+#            # They should already be sorted.
+#            filter_str = '%s-[0-9]*%s' % (file_root, file_ext)
+#            files = fnmatch.filter(os.listdir(filedir), filter_str)
+#            logging.debug('filter: %s [%s]' % (filter_str, str(files)))
+#            if len(files) > 0:
+#                # Get the suffix from the last one and add one to it.
+#                # This seems overly complicated but it takes care of the case
+#                # where the user deletes a file in the middle of the
+#                # sequence which guarantees the newest file is always last.
+#                last_file = files[-1]
+#                file_root, file_ext = os.path.splitext(last_file)
+#                try:
+#                    suffix = int(file_root[-4:]) + 1
+#                except Exception:
+#                    suffix = 0
+#                filename = file_root[:-4] + ('%04d' % suffix) + file_ext
+#                path = os.path.join(filedir, filename)
+#            else:
+#                path = os.path.join(filedir, file_root + '-0000' + file_ext)
+##        logging.debug('path: %s' % path)
+#        
+#        try:
+#            with open(path, 'w') as f:
+#                f.write(gc.gcode)
+#        except Exception:
+#            inkex.errormsg("Can't write to file: %s" % path)
         
 
 option_info = (
@@ -398,22 +487,31 @@ option_info = (
     ('--x-offset', '', 'store', 'float', 'x_offset', '0.0', 'Offset along X'),
     ('--y-scale', '', 'store', 'float', 'y_scale', '1.0', 'Scale factor Y'), 
     ('--y-offset', '', 'store', 'float', 'y_offset', '0.0', 'Offset along Y'),
+    ('--a-scale', '', 'store', 'float', 'a_scale', '1.0', 'Angular scale along rotational axis'),
     ('--a-offset', '', 'store', 'float', 'a_offset', '0.0', 'Angular offset along rotational axis'),
    
     ('--xy-feed', '', 'store', 'float', 'xy_feed', '10.0', 'XY axis feed rate in unit/s'),
     ('--z-feed', '', 'store', 'float', 'z_feed', '10.0', 'Z axis feed rate in unit/s'),
     ('--a-feed', '', 'store', 'float', 'a_feed', '60.0', 'A axis feed rate in deg/s'),
     ('--z-safe', '', 'store', 'float', 'z_safe', '5.0', 'Z axis safe height for rapid moves'),
+    ('--z-wait', '', 'store', 'float', 'z_wait', '500', 'Z axis wait (milliseconds)'),
     
+    ('--brush-overshoot-enabled', '', 'store', 'inkbool', 'brush_overshoot_enabled', False, 'Enable brush overshoot.'),
+    ('--brush-overshoot', '', 'store', 'float', 'brush_overshoot', '.5', 'Brushstroke overshoot distance.'),
+    ('--brush-flip-path', '', 'store', 'inkbool', 'brush_flip_path', True, 'Flip after path.'),
+    ('--brush-flip-reload', '', 'store', 'inkbool', 'brush_flip_reload', True, 'Flip after reload.'),
     ('--brush-reload', '', 'store', 'inkbool', 'brush_reload', True, 'Enable brush reload.'),
+    ('--brush-reload-path', '', 'store', 'inkbool', 'brush_reload_path', True, 'Force brush reload every path.'),
     ('--brushstroke-max', '', 'store', 'float', 'brushstroke_max', '10', 'Maximum brushstroke distance.'),
     ('--brushstroke-overlap', '', 'store', 'float', 'brushstroke_overlap', '0', 'Brushstroke overlap.'),
     ('--brush-dwell', '', 'store', 'float', 'brush_dwell', '0', 'Brush reload time (seconds).'),
     ('--brush-reload-angle', '', 'store', 'float', 'brush_reload_angle', '90', 'Brush reload angle (degrees).'),
+    ('--brush-size', '', 'store', 'float', 'brush_size', '1', 'Brush size'),
    
     ('--directory', '', 'store', 'string', 'directory', '~', 'Directory for gcode file'),
     ('--filename', '', 'store', 'string', 'filename', '-1.0', 'File name'), 
     ('--append-suffix', '', 'store', 'inkbool', 'append_suffix', True, 'Append auto-incremented numeric suffix to filename'), 
+    ('--separate-layers', '', 'store', 'inkbool', 'separate_layers', True, 'Seaparate gcode file per layer'), 
     ('--create-log', '', 'store', 'inkbool', 'log_create_log', True, 'Create log files'),
     ('--log-level', '', 'store', 'string', 'log_level', 'DEBUG', 'Log level'),
     ('--log-filename', '', 'store', 'string', 'log_filename', 'tcnc.log', 'Full pathname of log file'),
