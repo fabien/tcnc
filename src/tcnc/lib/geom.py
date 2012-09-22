@@ -92,6 +92,15 @@ class P(tuple):
         '''The vertical coordinate.'''
         return self[1]
     
+    @staticmethod
+    def from_polar(r, angle):
+        '''Create a Cartesian point from polar coordinates.
+        See http://en.wikipedia.org/wiki/Polar_coordinate_system
+        '''
+        x = r * math.cos(angle)
+        y = r * math.sin(angle)
+        return P(x,y)
+    
     def is_zero(self):
         ''' Return True if x and y are zero'''
         return self[0] == 0.0 and self[1] == 0.0
@@ -106,10 +115,12 @@ class P(tuple):
         :type other: P
         :return: True if distance between the vectors < ``EPSILON``.
         '''
-        x2, y2 = other
-        dx = self[0] - x2
-        dy = self[1] - y2
-        return (dx*dx + dy*dy) < EPSILON2
+        try:
+            dx = self[0] - other[0]
+            dy = self[1] - other[1]
+            return (dx*dx + dy*dy) < EPSILON2
+        except:
+            return False
 
     def length(self):
         '''The length or scalar magnitude of the vector.'''
@@ -393,6 +404,10 @@ class Line(tuple):
         '''Return the slope of this line.'''
         return (self.p2.x - self.p1.x) / (self.p2.y - self.p1.y)
     
+    def angle(self):
+        '''Return the angle of this line segment in radians.'''
+        return (self.p2 - self.p1).angle()
+    
     def midpoint(self):
         '''Return the midpoint of the line segment defined by p1 and p2'''
         #return P((self.p1.x + self.p2.x) / 2, (self.p1.y + self.p2.y) / 2)
@@ -404,11 +419,8 @@ class Line(tuple):
         Essentially this line segment is rotated 90deg about its midpoint.
         '''
         midp = self.midpoint()
-        #m = -1 / self.slope()   # Perpendicular slope
         p1 = self.p1 - midp
         p2 = self.p2 - midp
-#        y = -(self.p2.x - midp.x)
-#        x = self.p2.y - midp.y
         bp1 = midp + P(p1.y, -p1.x)
         bp2 = midp + P(p2.y, -p2.x)
         return Line(bp1, bp2)
@@ -437,7 +449,7 @@ class Line(tuple):
         return d
         
     def intersection(self, other, segment=False):
-        '''Return the intersection point (if any) of this line and another.
+        '''Return the intersection point (if any) of this line and another line.
         If <segment> is True then the intersection point must lie on both
         segments.
         Returns a point if it intersects otherwise None.
@@ -485,6 +497,23 @@ class Line(tuple):
         '''Return a Line segment with start and end points reversed.'''
         return Line(self.p2, self.p1)
         
+    def __eq__(self, other):
+        '''Compare for segment equality in a geometric sense.
+        Useful for culling overlapping segments...'''
+        # Compare both directions
+        same = (self.p1.almost_equal(other[0]) and self.p2.almost_equal(other[1])) \
+            or (self.p1.almost_equal(other[1]) and self.p2.almost_equal(other[0]))
+        logger.debug('segment: %s == %s' % (str(self), str(other)))
+        if same:
+            logger.debug('segment same')
+        return same
+
+    def __hash__(self):
+        '''Create a hash value for this line segment.
+        The hash value will be the same if p1 and p2 are reversed.
+        '''
+        return hash(self.p1) ^ hash(self.p2)
+
     def __str__(self):
         '''Concise string representation.'''
         return "Line(P(%.4f, %.4f), P(%.4f, %.4f))" % (self.p1[0], self.p1[1], self.p2[0], self.p2[1])
@@ -553,6 +582,13 @@ class Rectangle(tuple):
     def line_inside(self, line):
         '''Return True if the line segment is inside this rectangle.'''
         return self.point_inside(line.p1) and self.point_inside(line.p2)
+    
+    def pointset_inside(self, points):
+        '''Return True if the given set of points lie inside this rectangle.'''
+        for p in points:
+            if not self.point_inside(p):
+                return False
+        return True
 
     
 
@@ -570,21 +606,18 @@ class Arc(tuple):
         return tuple.__new__(Arc, ( P(p1), P(p2), radius, angle, P(center) ))
     
     @staticmethod
-    def from_two_points_and_tangent(p1, tan, p2, reverse=False):
-        '''Create an Arc given two points and a tangent vector from p1->tan.
+    def from_two_points_and_tangent(p1, ptan, p2, reverse=False):
+        '''Create an Arc given two points and a tangent vector from p1->ptan.
         Reverse the resulting arc direction if <reverse> is True.
         '''
-        if p1.almost_equal(tan) or p1.almost_equal(p2):
-            logging.debug('degenerate arc: control points are coincident')
-            return None
         # The arc angle is 2 * the angle defined by the tangent and the secant.
         # See http://en.wikipedia.org/wiki/Tangent_lines_to_circles
-        angle = 2 * p1.angle2(tan, p2)
-        if abs(angle) < EPSILON: # degenerate case... points may be coincident
-            logging.debug('degenerate arc: angle=%.5f, p1=(%.5f, %.5f), t=(%.4f,%.4f), p2=(%.4f,%.4f), reverse=%s' % \
-                          (angle, p1, tan, p2, str(reverse)))
-            return None
+        angle = 2 * p1.angle2(ptan, p2)
         chord_len = p1.distance(p2)
+        if chord_len < EPSILON or p1.distance(ptan) < EPSILON:
+            logging.debug('degenerate arc: angle=%.5f, p1=(%.5f, %.5f), t=(%.4f,%.4f), p2=(%.4f,%.4f), reverse=%s' % \
+                          (angle, p1.x, p1.y, ptan.x, ptan.y, p2.x, p2.y, str(reverse)))
+            return None
         radius = abs(chord_len / (2 * math.sin(angle / 2)))
         if reverse:
             return Arc(p2, p1, radius, -angle)
@@ -647,9 +680,11 @@ class Arc(tuple):
         '''Return the length of this arc segment (radius * angle)'''
         return abs(self.radius * self.angle)
     
-    def distance_to_point(self, p):
+    def distance_to_point(self, p, inside_only=True):
         '''Return the Hausdorff distance from this arc segment
         to the specified point.
+        :inside_only: return -1 if the point->circle projection
+        is outside the arc segment
         '''
         # Check for degenerate arc case
         if self.radius < EPSILON or abs(self.angle) < EPSILON:
@@ -674,6 +709,8 @@ class Arc(tuple):
             # Distance from point to edge of arc.
             d = abs(dp - self.radius)
 #            Line(p, (p - self.center) * (d / dp) + p).SVG_plot('#0000cc')
+        elif inside_only:
+            return -1
         else:
 #            Line(self.center, p).SVG_plot('#c0cc00')
             # Otherwise distance to closest arc segment endpoint.
@@ -826,7 +863,6 @@ class CubicBezier(tuple):
         there are no inflections, one inflection, or two inflections.
         '''
         t1, t2 = self.find_inflections()
-        logging.debug('PASS1 t1 = %.5f, t2 = %.5f' % (t1, t2))
         if t1 > 0.0 and t2 == 0.0:
             return self.subdivide(t1)
         elif t1 == 0.0 and t2 > 0.0:
@@ -836,7 +872,6 @@ class CubicBezier(tuple):
             curve1, curve2 = self.subdivide(t1)
             # Two inflection points
             t1, t2 = curve1.find_inflections()
-            logging.debug('PASS2 t1 = %.5f, t2 = %.5f' % (t1, t2))
             t = max(t1, t2)
             if t > 0.0:
                 curves.extend(curve1.subdivide(t))
@@ -945,48 +980,46 @@ class CubicBezier(tuple):
         center = chord.bisector().intersection(useg.bisector())
         radius = center.distance(self.p1)
         angle = center.angle2(self.p1, self.p2)
-        
         return Arc(self.p1, self.p2, radius, angle, center)
     
-    def biarc_approximation(self, tolerance=0.01, max_depth=4, line_flatness=0.01):
+    def biarc_approximation(self, tolerance=0.01, max_depth=4, line_flatness=0.01, recurs_depth=0):
         '''Approximate this curve using biarcs.
         This will recursively subdivide the curve into a series of
-        G1 connected arcs until the Hausdorff distance between the
+        G1 connected arcs or lines until the Hausdorff distance between the
         approximation and this bezier curve is within the specified tolerance.
         Returns a list of Arc and/or Line objects.
         '''
-        #self.SVG_plot()
-        # Bail if max recursion depth is reached or the curve is too small.
+#        self.SVG_plot() #DEBUG
+        # Check for degenerate cases:
+        # Bail if the curve endpoints are coincident.
         if self.p1.almost_equal(self.p2):
-            return ()        
-        
-        # If the curve is basically a straight line then return a Line.
+            return ()                
+        # Or if the curve is basically a straight line then return a Line.
         if self.flatness() < line_flatness:
             return (Line(self.p1, self.p2),)
         
-        biarcs = []
-        
-        # Recursively subdivide this curve at any inflection points to make sure
-        # the curve has monotone curvature with no discontinuities.
-        # This should only recurse once.
-        curves = self.subdivide_inflections()
-        if len(curves) > 1 and max_depth > 0:
-            for curve in curves:
-#                curve.SVG_plot()
-                biarcs.extend(curve.biarc_approximation(tolerance=tolerance, max_depth=max_depth-1, line_flatness=line_flatness))
-            return biarcs
+        if recurs_depth == 0:
+            # Subdivide this curve at any inflection points to make sure
+            # the curve has monotone curvature with no discontinuities.
+            # This should only be required once.
+            curves = self.subdivide_inflections()
+            if len(curves) > 1:
+                biarcs = []        
+                for curve in curves:
+                    biarcs.extend(curve.biarc_approximation(tolerance=tolerance, max_depth=max_depth, line_flatness=line_flatness, recurs_depth=recurs_depth+1))
+                return biarcs
 
         # Calculate the arc that intersects the two endpoints of this curve
         # and the set of possible biarc joints.
         j_arc = self.biarc_joint_arc()
-#        j_arc.SVG_plot(color='#c00000')
-        
+#        j_arc.SVG_plot(color='#c00000') #DEBUG
+        # Another degenerate case
         if j_arc.radius < EPSILON:
-            return biarcs
+            return ()
         
         # TODO: Use a better method of finding J.
-        # A more accurate (see A. Riskus, 2006)
-        # method is to find the intersection of the joint arc and this curve
+        # A possibly more accurate method (see A. Riskus, 2006)
+        # is to find the intersection of the joint arc and this curve
         # and use that point for J. The curve subdivision would occur at J
         # as well.
         # To make this simple for now:
@@ -996,38 +1029,33 @@ class CubicBezier(tuple):
         p = self.point_at(0.5)
         v = p - j_arc.center
         pjoint = v * (j_arc.radius / v.length()) + j_arc.center
-        
-#        pjoint.SVG_plot(color='#ffff00')
+#        pjoint.SVG_plot(color='#ffff00') #DEBUG
                 
-        # Create the two arcs that define the biarc
+        # Create the two arcs that define the biarc. These will be None
+        # if the control points are degenerate (ie collinear).
         arc1 = Arc.from_two_points_and_tangent(self.p1, self.c1, pjoint)
         arc2 = Arc.from_two_points_and_tangent(self.p2, self.c2, pjoint, reverse=True)
+        if arc1 is None or arc2 is None:
+            # In case of degenerate control points just create line segements.
+            # In general this should be caught by the test for curve flatness.
+            return (arc1 if arc1 is not None else Line(self.p1, pjoint),
+                    arc2 if arc2 is not None else Line(pjoint, self.p2))
         
-        # Check for degenerate arc control points. Just create a line segment.
-        if arc1 is None:
-            arc1 = Line(self.p1, self.p2)
-        if arc2 is None:
-            arc2 = Line(self.p1, self.p2)
-        
-        # Test for Hausdorff distance of approximation to original curve.
-        d1 = self.distance_to_arc(arc1)
-        d2 = self.distance_to_arc(arc2)
-        logging.debug('Hausdorff distance: %.4f, %.4f' % (d1, d2))
-        
-        # If Hausdorff distance is above tolerance then split this curve and
-        # recursively approximate the two sub-curves.
-        if max_depth > 0 and (d1 > tolerance or d2 > tolerance):
-            curve1, curve2 = self.subdivide(0.5)
-            biarcs.extend(curve1.biarc_approximation(tolerance, max_depth=max_depth-1, line_flatness=line_flatness))
-            biarcs.extend(curve2.biarc_approximation(tolerance, max_depth=max_depth-1, line_flatness=line_flatness))
-        else:
-#            arc1.SVG_plot(color='#00c000')
-#            arc2.SVG_plot(color='#00c000')
-            biarcs.append(arc1)
-            biarcs.append(arc2)
-            
-        return biarcs
-
+        if recurs_depth < max_depth:
+            # Calculate Hausdorff distances from arcs to this curve
+            d1 = self.distance_to_arc(arc1)
+            d2 = self.distance_to_arc(arc2)
+            # If Hausdorff distance is above tolerance then split this curve and
+            # recursively approximate the two sub-curves.
+            if d1 > tolerance or d2 > tolerance:
+                curve1, curve2 = self.subdivide(0.5)
+                biarcs = []
+                biarcs.extend(curve1.biarc_approximation(tolerance, max_depth=max_depth, line_flatness=line_flatness, recurs_depth=recurs_depth+1))
+                biarcs.extend(curve2.biarc_approximation(tolerance, max_depth=max_depth, line_flatness=line_flatness, recurs_depth=recurs_depth+1))
+                return biarcs
+#        arc1.SVG_plot(color='#00c000') #DEBUG
+#        arc2.SVG_plot(color='#00c000') #DEBUG
+        return (arc1, arc2)
 
     def distance_to_arc(self, arc, ndiv=9):
         '''Calculate an approximate Hausdorff distance between this curve and
@@ -1040,9 +1068,10 @@ class CubicBezier(tuple):
         for i in range(ndiv+1):
             t = float(i) / ndiv
             p = self.point_at(t)
-#            p.SVG_plot('#00cccc')
+#            p.SVG_plot('#00cccc') #DEBUG
             d = arc.distance_to_point(p)
-            dmax = max(dmax, d)
+            if d > 0.0: # only if arc intersects segment(center,p)
+                dmax = max(dmax, d)
         return dmax
 
     def __str__(self):
