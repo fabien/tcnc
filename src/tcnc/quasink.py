@@ -30,7 +30,7 @@ import simplestyle
 
 from lib import geom
 from lib import svg
-from lib.geom import P
+from lib.geom import P, Line
 
 import quasi
 
@@ -72,26 +72,40 @@ class Quasink(svg.SuperEffect):
 #        logger.debug('maxmax: %d' % self.options.numlines)
 #        logger.debug('midon0: %d' % int(self.options.mid_skinny))
 #        logger.debug('midon1: %d' % int(self.options.mid_fat))
-        logger.debug('polygon-stroke: %s' % self.options.polygon_stroke)
-        logger.debug('segment-stroke: %s' % self.options.segment_stroke)
+#        logger.debug('polygon-stroke: %s' % self.options.polygon_stroke)
+#        logger.debug('segment-stroke: %s' % self.options.segment_stroke)
+
+        units = self.get_document_units()
+        unit_scale = inkex.uuconv[units]
+        self.options.margin_right *= unit_scale
+        self.options.margin_left *= unit_scale
+        self.options.margin_top *= unit_scale
+        self.options.margin_bottom *= unit_scale
 
         self.scale = self.options.scale * self.SCALE_SCALE
         self.offset = P(self.view_center)
-        
-        doc_size = P(self.get_document_size())
-        
+                
         plotter = SVGQuasiPlotter()
+        top_right = P(self.get_document_size())
+        plotter.doc_clip_rect = geom.Rectangle(P(0,0), top_right)
+        bottom_left = P(self.options.margin_left, self.options.margin_bottom)
+        top_right -= P(self.options.margin_right, self.options.margin_top)
+        plotter.margin_clip_rect = geom.Rectangle(bottom_left, top_right)
         if self.options.draw_polygons:
             plotter.polygon_layer = self.create_layer('quasink_polygons')
         if self.options.draw_segments:
             plotter.segment_layer = self.create_layer('quasink_segments')
         if self.options.make_paths:
-            plotter.segpath_layer = self.create_layer('quasink_segpaths')
+            plotter.segpath_layer1 = self.create_layer('quasink_segpaths_open')
+            plotter.segpath_layer2 = self.create_layer('quasink_segpaths_closed')
+        if self.options.polygon_segments:
+            plotter.polyseg_layer = self.create_layer('quasink_polysegs')
         plotter.scale = self.scale
-        plotter.offsetx = self.offset[0]
-        plotter.offsety = self.offset[1]
-        plotter.clip_rect = geom.Rectangle(P(0.0, 0.0), doc_size)
-        plotter.is_clipped = bool(self.options.clip_poly)
+        plotter.offset = self.offset
+#        plotter.offsetx = self.offset[0]
+#        plotter.offsety = self.offset[1]
+        plotter.clip_polygons_to_margins = bool(self.options.clip_poly)
+        plotter.clip_segments_to_margins = bool(self.options.clip_segments)
         plotter.fill_polygons = bool(self.options.fillon)
         plotter.use_color = bool(self.options.colorfill)
         plotter.polygon_stroke = self.options.polygon_stroke
@@ -104,31 +118,64 @@ class Quasink(svg.SuperEffect):
                      int(self.options.numlines),
                      plotter)
         
+        if self.options.polygon_segments:
+            style_polyseg = simplestyle.formatStyle({ 'fill': 'none',
+                                 'stroke': self.parse_color(self.options.polygon_stroke),
+                                 'stroke-width': self.options.polygon_stroke_width,
+                                 'stroke-linejoin': 'round',
+                                 })
+            for segchain in plotter.poly_segments.get_segchains():
+                for segment in segchain:
+                    self.draw_segment(segment, plotter.polyseg_layer, style_polyseg)
+#            for segment in plotter.poly_segments.get_segments():
+#                self.draw_segment(segment, plotter.polyseg_layer)
+                
         if self.options.make_paths:
             style_open_path = simplestyle.formatStyle({ 'fill': 'none',
-                                 'stroke': simplestyle.formatColoria(simplestyle.parseColor(self.options.open_path_stroke)),
+                                 'stroke': self.parse_color(self.options.open_path_stroke),
                                  'stroke-width': self.options.open_path_stroke_width,
                                  'stroke-linecap': 'butt',
-                                 'stroke-linejoin': 'round'
+                                 'stroke-linejoin': 'round',
                                  })
-            style_closed_path = simplestyle.formatStyle({ 'fill': simplestyle.formatColoria(simplestyle.parseColor(self.options.closed_path_fill)),
-                                 'stroke': simplestyle.formatColoria(simplestyle.parseColor(self.options.closed_path_stroke)),
+            style_closed_path = simplestyle.formatStyle({ 'fill': self.parse_color(self.options.closed_path_fill),
+                                 'stroke': self.parse_color(self.options.closed_path_stroke),
                                  'stroke-width': self.options.closed_path_stroke_width,
-                                 'stroke-linejoin': 'round'
+                                 'stroke-linejoin': 'round',
                                  })
-            segpath_list = plotter.pathtable.get_paths()
+            segment_chains = SegmentTable()
+            for segment in plotter.path_segments:
+                segment_chains.chain_segment(segment)
+            segpath_list = segment_chains.get_segpaths()
             # Sort segment paths so that the largest are at the bottom of the Z-order
             segpath_list.sort(key=SegmentPath.bounding_box_area, reverse=True)
             for segpath in segpath_list:
                 segchain = segpath.segment_list
                 if len(segchain) >= self.options.minsegments:
                     if segchain[0].p1 == segchain[-1].p2:
-                        plotter.plot_segpath(segchain, style_closed_path)
+                        plotter.plot_segpath(plotter.segpath_layer2, segchain, style_closed_path)
                     elif not self.options.closed_paths:
-                        plotter.plot_segpath(segchain, style_open_path)
+                        plotter.plot_segpath(plotter.segpath_layer1, segchain, style_open_path)
+                        
+    def parse_color(self, color_text):
+        '''Parse the color text input from the extension dialog.'''
+        try:
+            if color_text and color_text.lower() != 'none':
+                return simplestyle.formatColoria(simplestyle.parseColor(color_text))
+        except:
+            pass
+        return 'none'
+
+    def draw_segment(self, segment, layer, style):
+        p1 = segment.p1 * self.scale + self.offset
+        p2 = segment.p2 * self.scale + self.offset
+        attrs = {'d': 'M %5f %5f L %5f %5f' % (p1.x, p1.y, p2.x, p2.y)}
+        attrs['style'] = style
+        inkex.etree.SubElement(layer, inkex.addNS('path', 'svg'), attrs)
 
 class SegmentPath(object):
+    ''''''
     def __init__(self, segments):
+        super(SegmentPath, self).__init__()
         self.segment_list = segments
     
     def bounding_box_area(self):
@@ -152,18 +199,41 @@ class SegmentPath(object):
         return self.bbox
 
 class SegmentTable(object):
-    chain_startp = {}   # Hashtable of segment start coordinates
-    chain_endp = {}     # Hashtable of segment end coordinates
+    '''A set of hashtables used to chain line segments
+    and remove duplicates.'''    
+    def __init__(self):
+        super(SegmentTable, self).__init__()
+        self.chain_startp = {}   # Hashtable of segment chain start coordinates
+        self.chain_endp = {}     # Hashtable of segment chain end coordinates
+
+    def add_polygon(self, vertices):
+        '''Add polygon segments to the hashtable and discard duplicates.'''
+        p1 = None
+        p2 = P(vertices[0])
+        for p in vertices[1:]:
+            p1 = p2
+            p2 = P(p)
+            segset1 = self.chain_startp.get(p1)
+            segset2 = self.chain_endp.get(p1)
+            if not self.match_segment(p2, 1, segset1) and not self.match_segment(p2, 0, segset2):
+                segment = Line(p1, p2)
+                if segset1 is None:
+                    self.chain_startp[p1] = [segment,]
+                else:
+                    segset1.append(segment)
+                segset2 = self.chain_endp.get(p2)
+                if segset2 is None:
+                    self.chain_endp[p2] = [segment,]
+                else:
+                    segset2.append(segment)
     
-    def reverse_chain(self, chain):
-        '''Reverse the chain and re-insert into hashtable'''
-        chain_rev = []
-        for segment in chain:
-            chain_rev.insert(0, segment.reverse())
-        # And re-insert into hash table
-        self.chain_startp[chain_rev[0].p1] = chain_rev
-        self.chain_endp[chain_rev[-1].p2] = chain_rev
-        
+    def match_segment(self, p, i, segments):
+        '''Compare point <p> with point [i] in each segment of <segments>'''
+        if segments:
+            for seg in segments:
+                if p == seg[i]:
+                    return True
+        return False
     
     def chain_segment(self, segment):
         '''Add a segment.
@@ -236,7 +306,19 @@ class SegmentTable(object):
             self.chain_startp[segment.p1] = chain
             self.chain_endp[segment.p2] = chain
     
-    def get_paths(self):
+    def reverse_chain(self, chain):
+        '''Reverse the chain and re-insert into hashtable'''
+        chain_rev = []
+        for segment in chain:
+            chain_rev.insert(0, segment.reverse())
+        # And re-insert into hash table
+        self.chain_startp[chain_rev[0].p1] = chain_rev
+        self.chain_endp[chain_rev[-1].p2] = chain_rev
+        
+    def get_segchains(self):
+        return self.chain_startp.values()
+    
+    def get_segpaths(self):
         #return self.paths
         return map(SegmentPath, self.chain_startp.itervalues())
     
@@ -250,77 +332,81 @@ class BufQuasiPlotter(quasi.QuasiPlotter):
         self.polygons.append(vertices)
 
     def plot_segment(self, x1, y1, x2, y2):
-        self.segments.append(geom.Line(P(x1, y1), P(x2, y2)))
+        self.segments.append(Line(P(x1, y1), P(x2, y2)))
 
 
 class SVGQuasiPlotter(quasi.QuasiPlotter):
     '''SVG output for quasi'''
     scale = 1.0
-    offsetx = 0.0
-    offsety = 0.0
+    offset = P(0, 0)
+#    offsetx = 0.0
+#    offsety = 0.0
     polygon_layer = None
     segment_layer = None
-    segpath_layer = None
-    clip_rect = [P(0, 0), P(1.0, 1.0)]
-    is_clipped = False
-    pathtable = SegmentTable()
+    segpath_layer1 = None
+    segpath_layer2 = None
+    polyseg_layer = None
+    doc_clip_rect = [P(0, 0), P(1.0, 1.0)]
+    margin_clip_rect = [P(0, 0), P(1.0, 1.0)]
+    clip_polygons_to_margins = False
+    clip_segments_to_margins = False
+    clip_polygons_to_doc = True
+    clip_segments_to_doc = True
+    segment_chains = SegmentTable()
+    path_segments = set()
+    poly_segments = SegmentTable()
     fill_polygons = False
     polygon_stroke = '#333333'
     segment_stroke = '#666666'
     polygon_stroke_width = '.5pt'
     segment_stroke_width = '.5pt'
     
-    def plot_segpath(self, segpath, style=None):
-        x = (segpath[0].p1.x * self.scale) + self.offsetx
-        y = (segpath[0].p1.y * self.scale) + self.offsety
-        #if not self.is_clipped or self.clip_rect.point_inside(P(x, y)):
-        d = 'M %f %f L' % (x, y)
+    def plot_segpath(self, layer, segpath, style=None):
+        p = (segpath[0].p1 * self.scale) + self.offset
+        d = 'M %f %f L' % (p.x, p.y)
         for segment in segpath:
-            x = (segment.p2.x * self.scale) + self.offsetx
-            y = (segment.p2.y * self.scale) + self.offsety
-            d = d + ' %f,%f' % (x, y)
-        attrs = {'d': d}
-        if style:
-            attrs['style'] = style
-        else:
-            attrs['style'] = Quasink.styles['segpath']
-        inkex.etree.SubElement(self.segpath_layer, inkex.addNS('path', 'svg'), attrs)
+            p = (segment.p2 * self.scale) + self.offset
+            d = d + ' %f,%f' % (p.x, p.y)
+        attrs = {'d': d, 'style': style}
+        inkex.etree.SubElement(layer, inkex.addNS('path', 'svg'), attrs)
     
     def plot_polygon(self, vertices):
         ''''''
-        if self.polygon_layer is None:
-            return
-        x = (vertices[0][0] * self.scale) + self.offsetx
-        y = (vertices[0][1] * self.scale) + self.offsety
-        if not self.is_clipped or self.clip_rect.point_inside(P(x, y)):
-            d = 'M %f %f L' % (x, y)
+        p = (P(vertices[0]) * self.scale) + self.offset
+        if (not self.clip_polygons_to_doc or self.doc_clip_rect.point_inside(p)) \
+        and (not self.clip_polygons_to_margins or self.margin_clip_rect.point_inside(p)):
+            d = 'M %f %f L' % (p.x, p.y)
             for p in vertices[1:]:
-                x = (p[0] * self.scale) + self.offsetx
-                y = (p[1] * self.scale) + self.offsety
-                if self.is_clipped and not self.clip_rect.point_inside(P(x, y)):
+                p = (P(p) * self.scale) + self.offset
+                if (self.clip_polygons_to_doc and not self.doc_clip_rect.point_inside(p)) \
+                or (self.clip_polygons_to_margins and not self.margin_clip_rect.point_inside(p)):
                     return
-                d = d + ' %f,%f' % (x, y)
+                d = d + ' %f,%f' % (p.x, p.y)
             attrs = {'d': d}
-            if self.fill_polygons:
-                fill = self.rgb2css(self.get_fill_color_rgb())
-            else:
-                fill = 'none'
-            attrs['style'] = 'fill:%s;stroke:%s;stroke-width:%s;' % (fill, self.polygon_stroke, self.polygon_stroke_width)
-            inkex.etree.SubElement(self.polygon_layer, inkex.addNS('path', 'svg'), attrs)
+            if self.polygon_layer is not None:
+                if self.fill_polygons:
+                    fill = self.rgb2css(self.get_fill_color_rgb())
+                else:
+                    fill = 'none'
+                attrs['style'] = 'fill:%s;stroke:%s;stroke-width:%s;stroke-linejoin:round;' % \
+                                  (fill, self.polygon_stroke, self.polygon_stroke_width)
+                inkex.etree.SubElement(self.polygon_layer, inkex.addNS('path', 'svg'), attrs)
+            if self.polyseg_layer is not None:
+                self.poly_segments.add_polygon(vertices)
 
     def plot_segment(self, x1, y1, x2, y2):
-        segment = geom.Line(P(x1,y1),P(x2,y2))
-        x1 = (x1 * self.scale) + self.offsetx
-        y1 = (y1 * self.scale) + self.offsety
-        x2 = (x2 * self.scale) + self.offsetx
-        y2 = (y2 * self.scale) + self.offsety
-        if not self.is_clipped or self.clip_rect.line_inside(geom.Line(P(x1,y1),P(x2,y2))):
+        segment = Line(P(x1, y1), P(x2, y2))
+        p1 = (segment.p1 * self.scale) + self.offset
+        p2 = (segment.p2 * self.scale) + self.offset
+        if (not self.clip_segments_to_doc or (self.doc_clip_rect.point_inside(p1) and self.doc_clip_rect.point_inside(p2))) \
+        and  (not self.clip_segments_to_margins or (self.margin_clip_rect.point_inside(p1) and self.margin_clip_rect.point_inside(p2))):
             if self.segment_layer is not None:
-                attrs = {'d': 'M %5f %5f L %5f %5f' % (x1, y1, x2, y2)}
+                attrs = {'d': 'M %5f %5f L %5f %5f' % (p1.x, p1.y, p2.x, p2.y)}
                 attrs['style'] = 'fill:none;stroke:%s;stroke-width:%s;' % (self.segment_stroke, self.segment_stroke_width)
                 inkex.etree.SubElement(self.segment_layer, inkex.addNS('path', 'svg'), attrs)
-            if self.segpath_layer is not None:
-                self.pathtable.chain_segment(segment)
+            if self.segpath_layer1 is not None:
+                #self.segment_chains.chain_segment(segment)
+                self.path_segments.add(segment)
 
     def rgb2css(self, rgb):
         '''convert the rgb float tuple to a CSS compatible color string'''
@@ -341,6 +427,7 @@ option_info = (
     ('--mid-fat', '-N', 'store', 'string', 'mid_fat', '1', 'Midpoint type for fat diamonds.'),
 
     ('--draw-polygons', '', 'store', 'inkbool', 'draw_polygons', True, 'Draw polygons.'),
+    ('--polygon-segments', '', 'store', 'inkbool', 'polygon_segments', True, 'Create segment-only polygon layer.'),
     ('--polygon-stroke', '', 'store', 'string', 'polygon_stroke', '#0000ff', 'Polygon CSS stroke color.'),
     ('--polygon-stroke-width', '', 'store', 'string', 'polygon_stroke_width', '.5pt', 'Polygon CSS stroke width.'),
 
@@ -348,7 +435,8 @@ option_info = (
     ('--segment-stroke', '', 'store', 'string', 'segment_stroke', '#0000ff', 'Segment CSS stroke color.'),
     ('--segment-stroke-width', '', 'store', 'string', 'segment_stroke_width', '.5pt', 'Segment CSS stroke width.'),
 
-    ('--clip-poly', '-C', 'store', 'inkbool', 'clip_poly', True, 'Clip polygons to document bounds.'),
+    ('--clip-poly', '-C', 'store', 'inkbool', 'clip_poly', True, 'Clip polygons to document margins.'),
+    ('--clip-segments', '', 'store', 'inkbool', 'clip_segments', True, 'Clip segments to document margins.'),
     ('--make-paths', '', 'store', 'inkbool', 'make_paths', True, 'Chain segments into paths.'),
     ('--min-segments', '-m', 'store', 'int', 'minsegments', '1', 'Min segments in path.'),
     ('--closed-paths', '-P', 'store', 'inkbool', 'closed_paths', True, 'Draw only closed paths.'),
@@ -358,6 +446,11 @@ option_info = (
     ('--closed-path-stroke', '', 'store', 'string', 'closed_path_stroke', '#ff0000', 'Closed path CSS stroke color.'),
     ('--closed-path-stroke-width', '', 'store', 'string', 'closed_path_stroke_width', '1pt', 'Closed path CSS stroke width.'),
     
+    ('--margin-left', '', 'store', 'float', 'margin_left', '1', 'Left margin'),
+    ('--margin-right', '', 'store', 'float', 'margin_right', '1', 'Right margin'),
+    ('--margin-top', '', 'store', 'float', 'margin_top', '1', 'Top margin'),
+    ('--margin-bottom', '', 'store', 'float', 'margin_bottom', '1', 'Bottom margin'),
+
     ('--create-log', '-D', 'store', 'inkbool', 'log_create_log', True, 'Create log files'),
     ('--log-level', '-L', 'store', 'string', 'log_level', 'DEBUG', 'Log level'),
     ('--log-filename', '-O', 'store', 'string', 'log_filename', 'quasink.log', 'Full pathname of log file'),

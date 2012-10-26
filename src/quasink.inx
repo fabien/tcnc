@@ -2,7 +2,7 @@
 
 <inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
 
-    <name>Quasink</name>
+    <name>Quasi/Penrose Tessellations</name>
     
     <id>com.utlco.quasink</id>
     
@@ -34,11 +34,20 @@
             <param name="numlines" type="int" min="0" max="100" _gui-text="Number of vector lines:">30</param>
 			<param name="scale" type="float" min="0.0" max="100.0" _gui-text="Output scale:">1.0</param>
             <param name="flip" type="boolean" _gui-text="Flip by 90 deg:">false</param>
-            <param name="clip-poly" type="boolean" _gui-text="Clip segments to page:">True</param>
 		</page>
 		
+        <page name="margins" _gui-text="Margins">
+            <param name="clip-poly" type="boolean" _gui-text="Clip polygons to margins:">True</param>
+            <param name="clip-segments" type="boolean" _gui-text="Clip segments to margins:">True</param>
+            <param name="margin-top" type="float" precision="2" min="-999" max="1000" _gui-text="Top margin:">0</param>
+            <param name="margin-left" type="float" precision="2" min="-999" max="1000" _gui-text="Left margin:">0</param>
+            <param name="margin-right" type="float" precision="2" min="-999" max="1000" _gui-text="Right margin:">0</param>
+            <param name="margin-bottom" type="float" precision="2" min="-999" max="1000" _gui-text="Bottom margin:">0</param>
+        </page>
+        
         <page name="polygons" _gui-text="Polygon Layer">
             <param name="draw-polygons" type="boolean" _gui-text="Draw polygons:">true</param>
+            <param name="polygon-segments" type="boolean" _gui-text="Create segment-only layer:">true</param>
             <param name="fillon" type="boolean" _gui-text="Fill polygons:">false</param>
             <param name="colorfill" type="boolean" _gui-text="Use color fill (otherwise grayscale):">false</param>
             <param name="zfill" type="boolean" _gui-text="Polygon type determines fill color:">false</param>
@@ -86,7 +95,7 @@ http://www.physics.emory.edu/~weeks/software/quasic.html
 	</param>	
     <effect needs-live-preview="false">
 		<effects-menu>
-			<submenu _name="Quasink"/>
+			<submenu _name="TCNC"/>
 		</effects-menu>
 		<object-type>path</object-type>
     </effect>
