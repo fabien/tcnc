@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+
+    <name>Create Wash Patterns</name>
+    
+    <id>com.utlco.wash</id>
+    
+	<dependency type="executable" location="extensions">tcnc/wash.py</dependency>
+	<dependency type="executable" location="extensions">inkex.py</dependency>
+	
+	<param name="active-tab" type="notebook">
+
+        <page name="lines" _gui-text="Lines">
+            <param name="line-orient" type="optiongroup" appearance="minimal" _gui-text="Line type:">
+                <_option value="h">Horizontal lines</_option>
+                <_option value="v">Vertical lines</_option>
+            </param>
+<!--             <param name="line-spacing" type="float" precision="2" min="0.0001" max="1000" _gui-text="Line spacing:">1</param>
+ -->            <param name="line-left2right" type="boolean" _gui-text="Draw left to right:">True</param>
+            <param name="line-top2bottom" type="boolean" _gui-text="Draw top to bottom:">True</param>
+            <param name="line-skip" type="int" min="0" max="1000" _gui-text="Skip lines:">0</param>
+            <param name="line-start" type="int" min="1" max="1000" _gui-text="Start at line:">1</param>
+            <param name="line-alt" type="boolean" _gui-text="Alternate line drawing:">False</param>
+            <param name="line-alt-rev" type="boolean" _gui-text="Draw alternate lines in reverse:">False</param>
+            <param name="line-angle" type="float" precision="2" min="0.0" max="90" _gui-text="Line angle:">0</param>
+        </page>
+        <!-- 
+        <page name="nestrect" _gui-text="Nesting Rectangles">
+            <param name="nestrect-enabled" type="boolean" _gui-text="Draw nesting rectangles:">False</param>
+            <param name="nestrect-spacing" type="float" precision="4" min="0.0001" max="1000" _gui-text="Line spacing:">1</param>
+            <param name="nestrect-in2out" type="boolean" _gui-text="Draw inside to outside:">True</param>
+            <param name="nestrect-clockwise" type="boolean" _gui-text="Draw clockwise:">True</param>
+            <param name="nestrect-angle" type="float" precision="4" min="0.0" max="90" _gui-text="Line angle:">90</param>
+        </page>
+        
+        <page name="spiralrect" _gui-text="Spiral Rectangle">
+            <param name="spiralrect-enabled" type="boolean" _gui-text="Draw nesting rectangles:">False</param>
+            <param name="spiralrect-spacing" type="float" precision="4" min="0.0001" max="1000" _gui-text="Line spacing:">1</param>
+            <param name="spiralrect-cwspiral" type="boolean" _gui-text="Clockwise spiral:">True</param>
+            <param name="spiralrect-in2out" type="boolean" _gui-text="Draw inside to outside:">True</param>
+            <param name="spiralrect-clockwise" type="boolean" _gui-text="Draw clockwise:">True</param>
+            <param name="spiralrect-angle" type="float" precision="4" min="0.0" max="90" _gui-text="Line angle:">90</param>
+        </page>
+         -->
+        <page name="brush" _gui-text="Brush">
+            <param name="units" type="optiongroup" appearance="minimal" _gui-text="Units:">
+                <_option value="doc">use document units</_option>
+                <_option value="in">inch</_option>
+                <_option value="mm">mm</_option>
+            </param>
+            <param name="brush-size" type="float" precision="2" min="0" max="1000" _gui-text="Brush size:">0</param>
+            <param name="brush-overlap" type="float" precision="2" min="-999" max="999" _gui-text="Brushstroke overlap:">0</param>
+            <param name="brush-overshoot" type="float" precision="2" min="0" max="1000" _gui-text="Brushstroke overshoot distance:">0</param>
+            <param name="brush-flip-reload" type="boolean" _gui-text="Flip brush before every reload:">true</param>
+            <param name="brush-dwell" type="float" precision="2" min="0" max="100" _gui-text="Brush reload time (seconds):">0</param>
+            <param name="brush-pause" type="boolean" _gui-text="Pause to reload brush:">False</param>
+            <param name="brush-speed" type="float" precision="2" min="0" max="200" _gui-text="Brush speed (units/sec.):">0</param>
+            <param name="brush-rotate-speed" type="float" precision="2" min="0" max="100" _gui-text="Rotation speed (degrees/sec.):">0</param>
+            <param name="brush-start-delay" type="float" precision="2" min="0" max="100" _gui-text="Stroke start delay (milliseconds):">0</param>
+		</page>
+
+        <page name="margins" _gui-text="Margins">
+            <param name="margin-top" type="float" precision="2" min="-999" max="1000" _gui-text="Top margin:">0</param>
+            <param name="margin-left" type="float" precision="2" min="-999" max="1000" _gui-text="Left margin:">0</param>
+            <param name="margin-right" type="float" precision="2" min="-999" max="1000" _gui-text="Right margin:">0</param>
+            <param name="margin-bottom" type="float" precision="2" min="-999" max="1000" _gui-text="Bottom margin:">0</param>
+        </page>
+		
+        <page name="output" _gui-text="Output">
+            <!-- <param name="gen-preview" type="boolean" _gui-text="Generate preview:">true</param> -->
+            <param name="gen-gcode" type="boolean" _gui-text="Generate G code:">true</param>
+            <param name="directory" type="string" _gui-text="Directory:">~</param>
+            <param name="filename" type="string" _gui-text="File name:">tcnc-wash-output.ngc</param>
+            <param name="append-suffix" type="boolean" _gui-text="Add numeric suffix to filename:">true</param>
+            <param name="create-log" type="boolean" _gui-text="Generate log file:">false</param>            
+            <param name="log-level" type="optiongroup" appearance="minimal" _gui-text="Log level:">
+                <_option value="DEBUG">Debug</_option>
+                <_option value="INFO">Info</_option>
+                <_option value="WARNING">Warning</_option>
+                <_option value="ERROR">Error</_option>
+                <_option value="CRITICAL">Critical</_option>
+            </param>
+            <param name="log-filename" type="string" _gui-text="Full path to log file:">tcnc-wash.log</param>
+        </page>
+        
+		<page name="about" _gui-text="About">
+			<_param name="about-text" type="description">
+Wash Version 0.1
+Generates G code for various paint wash patterns.
+			</_param>
+		</page>
+		
+	</param>	
+    <effect needs-live-preview="false">
+		<effects-menu>
+			<submenu _name="TCNC"/>
+		</effects-menu>
+		<object-type>path</object-type>
+    </effect>
+    <script>
+        <command reldir="extensions" interpreter="python">tcnc/wash.py</command>
+    </script>
+</inkscape-extension>

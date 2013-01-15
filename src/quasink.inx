@@ -18,8 +18,9 @@
                 <_option value="2">2: obtuse angle sides joined</_option>
                 <_option value="3">3: opposite sides joined to make cross</_option>
                 <_option value="4">4: all sides joined to make rectangle</_option>
-                <_option value="5">5: randomly choose 1 or 2</_option>
-                <_option value="6">6: randomly choose 1, 2, or 4</_option>
+                <_option value="5">5: narrow vertices joined</_option>
+                <_option value="6">6: wide vertices joined</_option>
+                <_option value="7">7: vertices joined to make cross</_option>
             </param>
             <param name="mid-fat" type="optiongroup" appearance="minimal" _gui-text="Midpoint type for fat diamonds:">
                 <_option value="0">0: midpoints not connected</_option>
@@ -27,22 +28,35 @@
                 <_option value="2">2: obtuse angle sides joined</_option>
                 <_option value="3">3: opposite sides joined to make cross</_option>
                 <_option value="4">4: all sides joined to make rectangle</_option>
-                <_option value="5">5: randomly choose 1 or 2</_option>
-                <_option value="6">6: randomly choose 1, 2, or 4</_option>
+                <_option value="5">5: acute angle vertices joined</_option>
+                <_option value="6">6: obtuse angle vertices joined</_option>
+                <_option value="7">7: vertices joined to make cross</_option>
             </param>
             <param name="symmetry" type="int" min="0" max="100" _gui-text="Degrees of symmetry:">5</param>
             <param name="numlines" type="int" min="0" max="100" _gui-text="Number of vector lines:">30</param>
 			<param name="scale" type="float" min="0.0" max="100.0" _gui-text="Output scale:">1.0</param>
             <param name="flip" type="boolean" _gui-text="Flip by 90 deg:">false</param>
+            <param name="offset-x" type="float" precision="2" min="-1000" max="1000" _gui-text="X offset:">0</param>
+            <param name="offset-y" type="float" precision="2" min="-1000" max="1000" _gui-text="Y offset:">0</param>
+            <param name="salt-x" type="float" precision="5" min="-10" max="10" _gui-text="X offset salt:">0.2137</param>
+            <param name="salt-y" type="float" precision="5" min="-10" max="10" _gui-text="Y offset salt:">0.1132</param>
 		</page>
 		
         <page name="margins" _gui-text="Margins">
             <param name="clip-poly" type="boolean" _gui-text="Clip polygons to margins:">True</param>
             <param name="clip-segments" type="boolean" _gui-text="Clip segments to margins:">True</param>
+            <param name="clip-to-circle" type="boolean" _gui-text="Circular clip region:">False</param>
             <param name="margin-top" type="float" precision="2" min="-999" max="1000" _gui-text="Top margin:">0</param>
             <param name="margin-left" type="float" precision="2" min="-999" max="1000" _gui-text="Left margin:">0</param>
             <param name="margin-right" type="float" precision="2" min="-999" max="1000" _gui-text="Right margin:">0</param>
             <param name="margin-bottom" type="float" precision="2" min="-999" max="1000" _gui-text="Bottom margin:">0</param>
+        </page>
+
+        <page name="projection" _gui-text="Projection">
+            <param name="project-sphere" type="boolean" _gui-text="Project on to sphere:">False</param>
+            <param name="project-invert" type="boolean" _gui-text="Invert projection:">False</param>
+            <param name="project-radius-useclip" type="boolean" _gui-text="Use clip circle for radius:">False</param>
+            <param name="project-radius" type="float" precision="2" min="0" max="1000" _gui-text="Radius:">0</param>
         </page>
         
         <page name="polygons" _gui-text="Polygon Layer">
@@ -73,7 +87,7 @@
         </page>
 
         <page name="debug" _gui-text="Debug">
-            <param name="create-log" type="boolean" _gui-text="Generate log file:">false</param>            
+            <param name="log-create-log" type="boolean" _gui-text="Generate log file:">false</param>            
             <param name="log-level" type="optiongroup" appearance="minimal" _gui-text="Log level:">
                 <_option value="DEBUG">Debug</_option>
                 <_option value="INFO">Info</_option>

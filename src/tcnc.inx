@@ -13,52 +13,67 @@
 
 		<page name="options" _gui-text="Options">	
             <param name="auto-select-paths" type="boolean" _gui-text="Select all paths if nothing is selected:">true</param>
-			<param name="biarc-tolerance" type="float" precision="5" min="0.00001" max="1000" _gui-text="Curve approximation tolerance:">4.0</param>
-            <param name="biarc-maxdepth" type="int" min="1" max="8" _gui-text="Maximum curve divisions:">4</param>
-            <param name="line-flatness" type="float" precision="5" min="0.00001" max="1000" _gui-text="Curve to line tolerance:">0.0001</param>
-            <param name="min-arc-radius" type="float" precision="5" min="0.00001" max="1000"  _gui-text="Minimum arc radius:">0.0001</param>
-            <param name="sort-paths" type="boolean" _gui-text="Sort cut paths:">true</param>
+            <param name="sort-paths" type="boolean" _gui-text="Sort cut paths to optimize rapid moves:">false</param>
+            <param name="units" type="optiongroup" appearance="minimal" _gui-text="Units (tolerances and G code output):">
+                <_option value="doc">use document units</_option>
+                <_option value="in">inch</_option>
+                <_option value="mm">mm</_option>
+            </param>
+            <param name="origin-ref" type="optiongroup" appearance="minimal" _gui-text="Origin reference:">
+                <_option value="paper">Lower left corner of paper</_option>
+                <_option value="bbox">Bounding box of selected paths</_option>
+            </param>
+<param name="options-1" type="description">Bezier curves in Inkscape paths are converted to simple arcs and lines using biarc approximation.
+These two properties determine the curve approximation accuracy. Higher accuracy comes at the expense of speed and G code output size.</param>
+			<param name="biarc-tolerance" type="float" precision="5" min="0.00001" max="1000" _gui-text="Curve approximation tolerance:">0.01</param>
+            <param name="biarc-max-depth" type="int" min="1" max="8" _gui-text="Maximum curve subdivisions:">4</param>
+<param name="options-2" type="description">These tolerances determine when a curve can be approximated by a simple straight line.</param>
+            <param name="line-flatness" type="float" precision="5" min="0.00001" max="1000" _gui-text="Curve to line tolerance:">0.001</param>
+            <param name="min-arc-radius" type="float" precision="5" min="0.00001" max="1000"  _gui-text="Minimum arc radius:">0.001</param>
 		</page>
 
+<!--
 		<page name="transform" _gui-text="Transform">
-			<param name="origin-ref" type="optiongroup" appearance="minimal" _gui-text="Origin reference:">
-				<_option value="paper">Lower left corner of paper</_option>
-				<_option value="bbox">Bounding box of selected paths</_option>
-			</param>
-			<param name="x-offset" type="float" precision="5" _gui-text="X offset:">0.0</param>
-			<param name="y-offset" type="float" precision="5" _gui-text="Y offset:">0.0</param>
-			<param name="x-scale" type="float" precision="5" _gui-text="X scale:">1.0</param>
-			<param name="y-scale" type="float" precision="5" _gui-text="Y scale:">1.0</param>
-			<param name="a-offset" type="float" precision="5" _gui-text="A offset (deg):">0.0</param>
+			<param name="x-offset" type="float" precision="5" min="-10000" max="10000" _gui-text="X offset:">0.0</param>
+			<param name="y-offset" type="float" precision="5" min="-10000" max="10000" _gui-text="Y offset:">0.0</param>
+			<param name="x-scale" type="float" precision="5" min="-10000" max="10000" _gui-text="X scale:">1.0</param>
+			<param name="y-scale" type="float" precision="5" min="-10000" max="10000" _gui-text="Y scale:">1.0</param>
+			<param name="a-offset" type="float" precision="5" min="-360" max="360" _gui-text="A offset (deg):">0.0</param>
 		</page>
-		
+-->		
         <page name="brush" _gui-text="Brush">
+            <param name="brush-angle" type="float" precision="2" min="-360" max="360" _gui-text="Brush angle (deg):">90.0</param>
             <param name="brush-overshoot-enabled" type="boolean" _gui-text="Enable brushstroke overshoot:">false</param>
             <param name="brush-overshoot" type="float" precision="4" min="0" max="1000" _gui-text="Brushstroke overshoot distance:">7</param>
             <param name="desc1" type="description">---</param>
             <param name="brush-flip-path" type="boolean" _gui-text="Flip brush after every path:">false</param>
             <param name="brush-flip-reload" type="boolean" _gui-text="Flip brush after reload:">false</param>
             <param name="desc3" type="description">---</param>
+<!--
             <param name="brush-reload" type="boolean" _gui-text="Enable brush reload:">false</param>
-            <param name="brush-reload-path" type="boolean" _gui-text="Force reload after every path:">false</param>
+-->
+            <param name="brush-reload-path" type="boolean" _gui-text="Reload brush after every path:">false</param>
             <param name="brushstroke-max" type="float" precision="2" min="0" max="1000" _gui-text="Max brushstroke distance:">7</param>
             <param name="brushstroke-overlap" type="float" precision="2" min="0" max="1000" _gui-text="Brushstroke overlap:">.5</param>
             <param name="brush-dwell" type="float" precision="1" _gui-text="Brush reload time (seconds):">5</param>
             <param name="brush-reload-angle" type="float" precision="2" min="-360" max="360" _gui-text="Brush reload angle (degrees):">90</param>
-            <param name="brush-size" type="float" precision="2" min="0" max="1000" _gui-text="Brush size:">0</param>
+            <param name="brush-size" type="float" precision="2" min="0" max="1000" _gui-text="Brush size (for preview only):">0</param>
 		</page>
 
         <page name="gcode" _gui-text="Tool / G Code">
-            <param name="units" type="optiongroup" appearance="minimal" _gui-text="Units:">
-                <_option value="doc">use document units</_option>
-                <_option value="in">inch</_option>
-                <_option value="mm">mm</_option>
-            </param>
             <param name="xy-feed" type="float" precision="2" min="0" max="1000" _gui-text="XY feed rate:">400.0</param>
             <param name="z-feed" type="float" precision="2" min="0" max="1000" _gui-text="Z feed rate:">400.0</param>
             <param name="a-feed" type="float" precision="2" min="0" max="1000" _gui-text="A feed rate (deg/sec):">60.0</param>
             <param name="z-safe" type="float" precision="4" min="-1000" max="1000" _gui-text="Z safe height:">5</param>
-            <param name="z-wait" type="float" precision="3" min="0" max="1000" _gui-text="Z axis wait (milliseconds):">500</param>
+            <param name="z-wait" type="int" min="0" max="1000" _gui-text="Z axis wait (milliseconds):">0</param>
+            <param name="traj-mode" type="optiongroup" appearance="minimal" _gui-text="Trajectory planning mode:">
+                <_option value="">Default mode (usually G64)</_option>
+                <_option value="G64">Blend without tolerance (G64)</_option>
+                <_option value="G64P">Blend with tolerance (G64 P&lt;t&gt;)</_option>
+                <_option value="G61">Exact path (G61)</_option>
+                <_option value="G61.1">Exact stop (G61.1)</_option>
+            </param>
+            <param name="traj-tolerance" type="float" precision="4" min="0" max="1000" _gui-text="Blend tolerance:">0</param>
         </page>
 
 		<page name="output" _gui-text="Output">
@@ -81,12 +96,12 @@
 		
 		<page name="about" _gui-text="About">
 			<_param name="about-text" type="description">
-			TCNC Version 0.1
+TCNC Version 0.2
 			</_param>
 		</page>
 		
 	</param>	
-    <effect>
+    <effect needs-live-preview="false">
 		<effects-menu>
 			<submenu _name="TCNC"/>
 		</effects-menu>

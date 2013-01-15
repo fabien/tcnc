@@ -1,4 +1,4 @@
-'''An Inkscape extension that will output G-code from
+"""An Inkscape extension that will output G-code from
 selected paths. The G-code is suited to a CNC cutting machine
 that has a tangent tool (ie a knife or a brush).
 
@@ -17,9 +17,8 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
-'''
+"""
 import os
-import fnmatch
 import logging
 import math
 import gettext
@@ -32,8 +31,8 @@ import simpletransform
 from lib import svg
 from lib import geom
 from lib import gcode
-
-from lib.geom import P, CubicBezier
+from lib import simplecam
+from lib import paintcam
 
 VERSION = "0.1"
 
@@ -45,50 +44,130 @@ DEBUG_LAYER_NAME = 'tcnc-debug'
 
 
 class TCnc(svg.SuperEffect):
-    '''Inkscape plugin that converts selected SVG elements into gcode suitable for a
+    """Inkscape plugin that converts selected SVG elements into gcode suitable for a
     four axis (XYZA) CNC machine with a tangential tool (ie a knife or a brush) as the A axis.
-    '''
-    styles = {
-              'simple': 'fill:none;stroke:#cccc99;stroke-width:0.25pt;stroke-opacity:1',
-              'brushline': 'fill:none;stroke:#0000ff;stroke-width:0.5pt;stroke-opacity:1',
-              'cutline': 'fill:none;stroke:#c000c0;stroke-width:0.75pt;stroke-opacity:1;marker-end:url(#PreviewLineEnd0)',
-              'cutline1': 'fill:none;stroke:#ff00ff;stroke-width:1pt;stroke-opacity:1;',
-              'cutarc0': 'fill:none;stroke:#ff0000;stroke-width:0.75pt;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;marker-end:url(#PreviewLineEnd0)',
-              'cutarc1': 'fill:none;stroke:#ff0000;stroke-width:0.75pt;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:1;marker-end:url(#PreviewLineEnd1)',
-              'cutpath_end_marker': 'fill-rule:evenodd;fill:#FFFFFF;stroke:#ff0000;stroke-width:1.0pt;marker-start:none',
-              'movepath_end_marker': 'fill-rule:evenodd;fill:#00ff00;stroke:#00ff00;stroke-width:1.0pt;marker-start:none',
-              'tangent_tool': 'fill:none;stroke:#00cc00;stroke-width:2.0pt;stroke-opacity:.5',
-              'moveline': 'fill:none;stroke:#00ff00;stroke-width:1pt;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1;stroke-miterlimit:4;stroke-dasharray:1.2, 5;stroke-dashoffset:0;marker-end:url(#PreviewLineEnd2)',
-              }
+    """
         
-    last_point = P(0.0, 0.0)
+    class SVGPreviewPlotter(simplecam.SimpleCAM.PreviewPlotter):
+        """Plotter used by SimpleCAM to generate G code preview output."""
+        _OPACITY = 0.5
+        styles = {'cutpath_end_marker': 'fill-rule:evenodd;fill:#FFFFFF;stroke:#ff0000;stroke-width:1.0pt;marker-start:none',
+                  'movepath_end_marker': 'fill-rule:evenodd;fill:#00ff00;stroke:#00ff00;stroke-width:1.0pt;marker-start:none',
+                  'feedline': 'fill:none;stroke:#6060c0;stroke-width:%dpx;stroke-opacity:%f%s',
+                  'feedrotate': 'fill:#6060c0;stroke:none;stroke-width:%dpx;fill-opacity:%f',
+                  'feedarc': 'fill:none;stroke:#6060c0;stroke-width:%dpx;stroke-linecap:butt;stroke-linejoin:miter;stroke-miterlimit:4;stroke-opacity:%f%s',
+                  'moveline': 'fill:none;stroke:#00ff00;stroke-width:%dpx;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1;stroke-miterlimit:4;stroke-dasharray:1.2, 5;stroke-dashoffset:0;marker-end:url(#PreviewLineEnd2)',
+                  'intervalmark': 'fill:red;stroke:red',}
+        
+        def __init__(self, inkex, feed_line_width):
+            self.inkex = inkex
+            self.feed_line_width = feed_line_width
+            # Create Inkscape line end marker glyphs and insert them into the document.
+            self.inkex.create_simple_marker('PreviewLineEnd0',
+                            'M 5.77,0.0 L -2.88,5.0 L -2.88,-5.0 L 5.77,0.0 z',
+                            self.styles['cutpath_end_marker'], 'scale(0.4) translate(-4.5,0)')
+            self.inkex.create_simple_marker('PreviewLineEnd1',
+                            'M 5.77,0.0 L -2.88,5.0 L -2.88,-5.0 L 5.77,0.0 z',
+                            self.styles['cutpath_end_marker'], 'scale(-0.4) translate(-4.5,0)')
+            self.inkex.create_simple_marker('PreviewLineEnd2',
+                            'M 5.77,0.0 L -2.88,5.0 L -2.88,-5.0 L 5.77,0.0 z',
+                            self.styles['movepath_end_marker'], 'scale(0.5) translate(-4.5,0)')
+        
+        def _build_style(self, style_id, marker_end_url, width, depth):
+            if width > 5:
+                suffix = ''
+                opacity = self._OPACITY
+            else:
+                suffix = ';marker-end:url(%s)' % marker_end_url
+                opacity = 1.0
+            if width < 1.0:
+                width = 1.0
+            return self.styles[style_id] % (width, opacity, suffix)
             
+        def draw_move_line(self, p1, p2):
+            """Draw a line from :p1: to :p2: on the preview layer
+            that represents a rapid move.
+            """
+            self.inkex.create_line(p1.x, p1.y, p2.x, p2.y,
+                                   self.styles['moveline'])
+        
+        def draw_feed_line(self, p1, p2, width=1, depth=0.0):
+            """Draw a line from :p1: to :p2: on the preview layer
+            that represents a linear feed.
+            :width: Line (tool) width in machine units
+            :depth: Current tool depth in machine units
+            """
+            style = self._build_style('feedline', '#PreviewLineEnd0', width, depth)
+            self.inkex.create_line(p1.x, p1.y, p2.x, p2.y, style)
+        
+        def draw_feed_rotate(self, center, angle1, angle2, width=1.0, depth=0.0):
+            """Draw a tool rotation at :center: from :angle1: to :angle2:
+            on the preview layer.
+            :width: Line (tool) width in machine units
+            :depth: Current tool depth in machine units
+            This draws a more or less hourglass shape at the point of rotation.
+            """
+            if width > 3:
+                r = self.feed_line_width / 2
+                a90 = math.pi / 2
+                p1 = center + geom.P.from_polar(r, angle1 + a90)
+                p2 = center + geom.P.from_polar(r, angle2 + a90)
+                p3 = center + geom.P.from_polar(r, angle2 - a90)
+                p4 = center + geom.P.from_polar(r, angle1 - a90)
+                arc1 = geom.Arc(p1, p2, r, angle2 - angle1, center)
+                arc2 = geom.Arc(p3, p4, r, -(angle2 - angle1), center)
+                style = self.styles['feedrotate'] % (width, self._OPACITY)
+                attrs = { 'd': 'M %5f %5f L %5f %5f A %5f %5f 0 0 %d %5f %5f L %5f %5f L %5f %5f A %5f %5f 0 0 %d %5f %5f L %5f %5f' % \
+                          (center.x, center.y, arc1.p1.x, arc1.p1.y,
+                           arc1.radius, arc1.radius,
+                           0 if arc1.angle < 0 else 1,
+                           arc1.p2.x, arc1.p2.y, center.x, center.y,
+                           arc2.p1.x, arc2.p1.y,
+                           arc1.radius, arc1.radius,
+                           0 if arc2.angle < 0 else 1,
+                           arc2.p2.x, arc2.p2.y,
+                           center.x, center.y,
+                           ),
+                         'style': style }
+                self.inkex.create_path(attrs)
+        
+        def draw_feed_arc(self, arc, width=1, depth=0.0):
+            """Draw an arc on the preview layer that represents a circular feed.
+            :arc: A geom.Arc object
+            :width: Line (tool) width in machine units
+            :depth: Current tool depth in machine units
+            """
+            sweep_flag = 0 if arc.angle < 0 else 1
+            style = self._build_style('feedarc',
+                                      '#PreviewLineEnd' + str(sweep_flag),
+                                      width, depth)
+            attrs = { 'd': 'M %5f %5f A %5f %5f 0 0 %d %5f %5f' % \
+                      (arc.p1.x, arc.p1.y, arc.radius, arc.radius,
+                       sweep_flag, arc.p2.x, arc.p2.y),
+                     'style': style }
+            self.inkex.create_path(attrs)
+        
+        def draw_interval_marker(self, p, depth=0.0):
+            """Draw a marker glyph (a small filled circle for example)
+            at the specified location :p: on the preview layer.
+            :depth: Current tool depth in machine units
+            """
+            self.create_circle(p.x, p.y, '2pt', self.styles['intervalmark'])
+    
     def effect(self):
-        '''Main entry point for Inkscape plugins.
-        '''
+        """Main entry point for Inkscape plugins.
+        """
         # Create a log file for debugging
         if self.options.log_create_log and self.options.log_filename:
             log_path = os.path.abspath(os.path.expanduser(self.options.log_filename))
             log_level = getattr(logging, self.options.log_level, DEFAULT_LOG_LEVEL)
             logging.basicConfig(filename=log_path, filemode='w', level=log_level)
         
-        if self.options.units == 'doc':
-            self.units = self.get_document_units()
-            if self.units not in ('in', 'mm'):
-                inkex.errormsg(_('Document units must be either inches or mm.'))
-                return
-        else:
-            self.units = self.options.units
+        self.process_options()
+        if self.options.units not in ('in', 'mm'):
+            inkex.errormsg(_('Document units must be either inches or mm.'))
+            return
         
-        unit_scale = inkex.uuconv[self.units]
-        self.brush_size = self.options.brush_size * unit_scale
-        self.biarc_tolerance = self.options.biarc_tolerance * unit_scale
-        self.biarc_max_depth = self.options.biarc_max_depth
-        self.line_flatness = self.options.line_flatness * unit_scale
-        
-        # Create the SVG for the line end markers used in preview layer
-        self.create_inkscape_markers()
-            
         # Get selected SVG elements if any
         rootnodes = self.selected.values()
         if not rootnodes:
@@ -126,28 +205,25 @@ class TCnc(svg.SuperEffect):
         cutpath_list = self.process_shapes(shapelist, flip_transform)
         
         # Generate and export G code
-        gc = self.generate_gcode(cutpath_list)
+        cam = self.generate_gcode(cutpath_list)
         try:
-            self.export_gcode(gc)
+            cam.export(self.options.filename, self.options.directory,
+                      append_suffix=self.options.append_suffix)
         except IOError, e:
-            inkex.errormsg(str(e))
+            inkex.errormsg(str(e))            
             
-            
-    def create_inkscape_markers(self):
-        '''Create Inkscape line end marker glyphs and insert them into the document.
-        '''
-        self.create_simple_marker('PreviewLineEnd0', 'M 5.77,0.0 L -2.88,5.0 L -2.88,-5.0 L 5.77,0.0 z',
-                          self.styles['cutpath_end_marker'], 'scale(0.4) translate(-4.5,0)')
-        self.create_simple_marker('PreviewLineEnd1', 'M 5.77,0.0 L -2.88,5.0 L -2.88,-5.0 L 5.77,0.0 z',
-                          self.styles['cutpath_end_marker'], 'scale(-0.4) translate(-4.5,0)')
-        self.create_simple_marker('PreviewLineEnd2', 'M 5.77,0.0 L -2.88,5.0 L -2.88,-5.0 L 5.77,0.0 z',
-                          self.styles['movepath_end_marker'], 'scale(0.5) translate(-4.5,0)')
-
-
+    def process_options(self):
+        """Convert option units, etc..."""
+        if self.options.units == 'doc':
+            self.options.units = self.get_document_units()
+        unit_scale = inkex.uuconv[self.options.units]
+        # Perform any necessary unit conversion on plugin options
+        self.convert_option_units(default_unit_scale=unit_scale)
+        
     def process_shapes(self, shapelist, transform):
-        '''Process the SVG shape elements and generate G code.
+        """Process the SVG shape elements and generate G code.
         Return a list of cut paths as SVG path elements.
-        '''
+        """
         cutpath_list = []
         for node, layer_transform in shapelist:
             # Convert the shape element to a simplepath
@@ -174,358 +250,126 @@ class TCnc(svg.SuperEffect):
             cutpath = []
             for subcsp in csp:
                 for i in range(1,len(subcsp)):
-                    sp1 = subcsp[i-1]
-                    sp2 = subcsp[i]
-                    curve = CubicBezier(P(sp1[1]), P(sp1[2]),
-                                        P(sp2[0]), P(sp2[1]))
-                    biarcs = curve.biarc_approximation(tolerance=self.biarc_tolerance,
-                                                       max_depth=self.biarc_max_depth,
-                                                       line_flatness=self.line_flatness)
-                    cutpath.extend(biarcs)
+                    p1 = geom.P(subcsp[i-1][1])
+                    c1 = geom.P(subcsp[i-1][2])
+                    p2 = geom.P(subcsp[i][0])
+                    c2 = geom.P(subcsp[i][1])
+                    if p1 == c1 and p2 == c2:
+                        segment = geom.Line(p1, p2)
+                    else:
+                        segment = geom.CubicBezier(p1, c1, p2, c2)
+                    cutpath.append(segment)
+
             # The cutpath is a tuple ('path-id', path_list)
             cutpath_list.append((node.get('id'), cutpath))
         
-        # Sort the cutpaths to minimize fast tool moves
-        if self.options.sort_paths:
-            cutpath_list = self.sort_cutpaths(cutpath_list)
         return cutpath_list
-    
-    def sort_cutpaths(self, cutpath_list):
-        '''Sort the cutpaths to minimize tool movements.'''
-        # TODO: use a better sort method...
-        cutpath_list.sort(key=lambda cp: cp[1][0].p1.x)
-        cutpath_list.sort(key=lambda cp: cp[1][0].p1.y)
-        return cutpath_list
-    
-    def draw_preview_line(self, p1, p2, style_id, angle=None):
-        '''Draw an SVG line path on to the preview layer'''
-        self.create_line(p1[0], p1[1], p2[0], p2[1], self.styles[style_id])
-        if angle is not None:
-            self.draw_preview_brushline(p2, angle)
-    
-    def draw_preview_arc(self, p1, r, sweep_flag, p2, style_id, angle=None):
-        '''Draw an SVG arc on to the preview layer'''
-        attrs = { 'd': 'M %5f %5f A %5f %5f 0.0 0 %d %5f %5f' % \
-                 (p1[0], p1[1], r, r, sweep_flag, p2[0], p2[1]),
-                 'style': self.styles[style_id + str(sweep_flag)] }
-        self.create_path(attrs)
-        if angle is not None:
-            self.draw_preview_brushline(p2, angle)
-        
-    def draw_preview_brushline(self, p, angle):
-        '''Draw a line showing the brush width and angle.
-        :p: midpoint
-        :angle: angle tangent to brush line
-        '''
-        if self.brush_size > 0.0:
-            r = self.brush_size / 2
-            p1 = p + P.from_polar(r, angle - (math.pi / 2))
-            p2 = p + P.from_polar(r, angle + (math.pi / 2))
-            self.create_line(p1[0], p1[1], p2[0], p2[1], self.styles['brushline'])
-        
-        
-#    def draw_preview_path(self, d, style_id):
-#        '''Draw an SVG path on the preview layer'''
-#        attrs = { 'd': d, 'style': self.styles[style_id]}
-#        self.create_path(attrs)
-
-    def draw_preview_dot(self, x, y, size='small', color='#000000'):
-        '''Draw an SVG dot (a small filled circle) at the specified location'''
-        radius = {'small': '2pt', 'medium': '5pt', 'large': '10pt',}
-        style = 'fill:%s;stroke:%s' % (color, color)
-        self.create_circle(x, y, radius[size], style)
-        
+            
     def generate_gcode(self, cutpath_list):
-        '''Generate G code from cutpaths.'''
-        gc = gcode.GCode(
-                    zsafe=float(self.options.z_safe),
-                    zfeed=float(self.options.z_feed),
-                    xyfeed=float(self.options.xy_feed),
-                    afeed=float(self.options.a_feed * 60),
-                    )
-        gc.set_axis_offset('X', self.options.x_offset)
-        gc.set_axis_offset('Y', self.options.y_offset)
-        gc.set_axis_offset('Z', self.options.z_offset)
-        gc.set_axis_offset('A', (math.pi / 2) + self.options.a_offset)
-        gc.set_axis_scale('X', self.options.x_scale)
-        gc.set_axis_scale('Y', self.options.y_scale)
-        gc.set_axis_scale('Z', self.options.z_scale)
-        gc.set_axis_scale('A', self.options.a_scale)
-        gc.set_unit_scale(self.get_unit_scale(self.units))
-        # Cumulative tool cutting distance
-        self.feed_distance = 0.0
-        # Maximum distance before a brush reload
-        self.max_feed_distance = self.options.brushstroke_max * inkex.uuconv[self.units]
+        """Generate G code from cutpaths."""
+        gc = gcode.GCode(zsafe=float(self.options.z_safe),
+                         zfeed=float(self.options.z_feed),
+                         xyfeed=float(self.options.xy_feed),
+                         afeed=float(self.options.a_feed * 60))
+        gc.set_axis_offsets('XYZA', (self.options.x_offset,
+                            self.options.y_offset, self.options.z_offset,
+                            self.options.a_offset + self.options.brush_angle))
+        gc.set_axis_scales('XYZA', (self.options.x_scale,
+                           self.options.y_scale, self.options.z_scale,
+                           self.options.a_scale))
+        gc.units = self.options.units
+        gc.unit_scale = self.get_unit_scale(self.options.units)
+        gc.trajectory_mode = self.options.traj_mode
+        gc.trajectory_tolerance = self.options.traj_tolerance
         
-        # Brush overshoot distance
-        self.brush_overshoot = self.options.brush_overshoot * inkex.uuconv[self.units]
+        cam = paintcam.PaintCAM(gc, preview_plotter=TCnc.SVGPreviewPlotter(self, self.options.brush_size))
+        cam.optimize_rapid_moves = self.options.sort_paths
+        cam.tool_width = self.options.brush_size
+        cam.biarc_tolerance = self.options.biarc_tolerance
+        cam.biarc_max_depth = self.options.biarc_max_depth
+        cam.biarc_line_flatness = self.options.line_flatness
+        cam.brush_landing_angle = self.options.brush_landing_angle
+        cam.brush_landing_end_height = self.options.brush_landing_end_height
+        cam.brush_landing_start_height = self.options.brush_landing_start_height
+        cam.brush_liftoff_angle = self.options.brush_liftoff_angle
+        cam.brush_liftoff_height = self.options.brush_liftoff_height
+        cam.brush_overshoot = self.options.brush_overshoot
+        cam.brush_reload_angle = self.options.brush_reload_angle
+        cam.brush_reload_dwell = self.options.brush_dwell
+        if self.options.brushstroke_max > 0.0:
+            cam.feed_interval = self.options.brushstroke_max
+            cam.brush_flip_before_reload = True
         
-        gc.default_header(units=self.units,
-                          description=('Generated by TCNC Inkscape extension version %s' % VERSION,))
+        cam.generate_gcode(cutpath_list)
+        return cam
         
-        for cutpath in cutpath_list:
-            gc.addline()
-            gc.comment('SVG Path: id="%s"' % cutpath[0])
-            self.generate_cutpath_gcode(gc, cutpath[1])
-            # If brush flip is enabled then rotate the brush 180deg.
-            if self.options.brush_flip_path:
-                self.flip_brush(gc)
-        gc.default_footer()
-        return gc
+option_info = [
+    svg.optargs('--active-tab', type='string', dest='active_tab'),
     
-    
-    brush_flipped = -1
-    def flip_brush(self, gc):
-        # Offset brush rotation by 180deg.
-        self.brush_flipped *= -1 # Toggle rotation direction
-        gc.offset['A'] += self.brush_flipped * 180
+    svg.optargs('--units', dest='units', default='in', help='Document units.'),
+    svg.optargs('--auto-select-paths', type='inkbool', dest='auto_select_paths', default=True, help='Select all paths if nothing is selected.'),
+    svg.optargs('--biarc-tolerance', type='float', convert_to='world', default=0.01, help='Biarc approximation fitting tolerance.'),                
+    svg.optargs('--biarc-max-depth', type='int', default=4, help='Biarc approximation maximum curve splitting recursion depth.'),                
+    svg.optargs('--line-flatness', type='float', convert_to='world', default=0.001, help='Curve to line flatness.'),                
+    svg.optargs('--min-arc-radius', type='float', convert_to='world', default=0.01, help='All arcs having radius less than minimum will be considered as straight line.'),
+    svg.optargs('--sort-paths', type='inkbool', dest='sort_paths', default=True, help='Sort paths to minimize rapid moves.'),
 
-    def generate_cutpath_gcode(self, gc, cutpath, depth=0):
-        """Generate G code for the given cutpath.
-        This method also creates SVG output that serves as a preview to the
-        G code output. The SVG output is added to the specified group or layer.
-        The cutpath is specified by a list of curve segments which are either
-        line segments or circular arc segments.
-        """
-        def calc_rotation(current_angle, new_angle):
-            '''Calculate the relative rotation amount in radians'''
-            # Normalize the angles to 0-360
-            prev_angle = math.fmod(current_angle, 2*math.pi)
-            if prev_angle < 0:
-                prev_angle += 2*math.pi
-            new_angle = math.fmod(new_angle + 2*math.pi, 2*math.pi)
-            rotation_angle = new_angle - prev_angle
-            if prev_angle < math.pi and new_angle > (prev_angle + math.pi):
-                rotation_angle -= 2*math.pi
-            elif prev_angle > math.pi and new_angle < (prev_angle - math.pi):
-                rotation_angle += 2*math.pi
-            return rotation_angle
-            
-        if len(cutpath) == 0:
-            return ''                
-                
-        current_angle = 0.0
-        
-        # Draw the initial rapid move line on the SVG preview layer
-        self.draw_preview_line(self.last_point, cutpath[0].p1, 'moveline')            
-        self.last_point = geom.P(cutpath[0].p1)
-        
-        # Pause to reload the brush if enabled
-        if self.options.brush_reload and self.options.brush_reload_path:
-            self.generate_brush_reload_gcode(gc, self.last_point, current_angle, None)
-            
-        # Create G-code for each segment of the cutpath
-        gc.tool_up()
-        for segment in cutpath:
-            start = geom.P(segment.p1)
-            end = geom.P(segment.p2)
-            self.last_point = geom.P(end)
-            
-            # If enabled and the tool has traveled a specified distance since
-            # the last reload then pause the brush to allow paint reloading.
-            if self.options.brush_reload \
-            and self.max_feed_distance > 0.0 \
-            and self.feed_distance >= self.max_feed_distance:
-                self.generate_brush_reload_gcode(gc, end, current_angle, depth)
-                    
-            if isinstance(segment, geom.Line):
-                # Calculate tool tangent angle for line
-                angle = (end - start).angle()
-                current_angle += calc_rotation(current_angle, angle)
-                if not gc.is_tool_down:
-                    gc.rapid_move(start.x, start.y, a=current_angle)
-                    gc.tool_down(depth, self.options.z_wait)
-#                else:
-#                    gc.feed_rotate(current_angle)
-                
-                seglen = start.distance(end)
-                if seglen > geom.EPSILON:
-                    self.feed_distance += seglen
-                    gc.feed(end.x, end.y, depth, current_angle)
-                    # Add the line to the SVG preview layer
-                    self.draw_preview_line(start, end, 'cutline', current_angle)
-                
-            elif isinstance(segment, geom.Arc):
-                # Calculate starting tool tangent angle
-                if segment.angle < 0: # CW ?
-                    angle = (segment.center - start).angle() + math.pi/2
-                else: # CCW
-                    angle = (start - segment.center).angle() + math.pi/2
-                current_angle += calc_rotation(current_angle, angle)
-                if not gc.is_tool_down:
-                    gc.rapid_move(start.x, start.y, a=current_angle)
-                    gc.tool_down(depth, self.options.z_wait)
-#                else:
-#                    gc.feed_rotate(current_angle)   # Rotate to starting arc tangent
-                current_angle += segment.angle  # Endpoint tangent angle
-                gc.tool_down(depth, self.options.z_wait)    
-                seglen = segment.length()
-                if seglen > geom.EPSILON:
-                    self.feed_distance += seglen
-                    gc.feed_arc((segment.angle<0), end.x, end.y, depth,
-                                (segment.center.x-start.x),
-                                (segment.center.y-start.y), current_angle)
-                    # Add the arc to the SVG preview layer
-                    sweep_flag = 0 if segment.angle < 0 else 1
-                    self.draw_preview_arc(start, segment.radius, sweep_flag,
-                                          end, 'cutarc', current_angle)
-
-        # If brush overshoot is enabled keep drawing past the last endpoint
-        # in the same direction for the specified overshoot distance.
-        if self.options.brush_overshoot_enabled:
-            end = self.generate_brush_overshoot_gcode(gc, end, current_angle, depth)
-            
-        # Post-path G code
-        gc.tool_up()
-        gc.rehome_rotational_axis()
-        return
-    
-    def generate_brush_overshoot_gcode(self, gc, last_point, current_angle, depth):
-        '''Generate the G code for the brush overshoot vector.'''
-        # Calculate endpoint of overshoot segment
-        dx = math.cos(current_angle) * self.brush_overshoot
-        dy = math.sin(current_angle) * self.brush_overshoot
-        endp = last_point + (dx, dy)
-        gc.feed(endp.x, endp.y, depth)
-        self.feed_distance += self.brush_overshoot
-        # Show the overshoot on the SVG preview layer
-        self.draw_preview_line(last_point, endp, 'cutline1')
-        return endp
-            
-    def generate_brush_reload_gcode(self, gc, stop_point, current_angle, depth):
-        '''Generate the G code for reloading the brush tool.'''
-        gc.comment('Pause for brush reload')
-        if self.options.brush_flip_reload:
-            self.flip_brush(gc)
-        #TODO: overshoot end of previous stroke to overlap next stroke
-        
-        if depth is not None:
-            gc.tool_up()
-        # Rotate the brush to a position that makes it easy to add paint
-        da = math.fmod(current_angle, 2*math.pi)
-        if math.fabs(da) < math.pi:
-            a = current_angle - da
-        elif da < 0:
-            a = current_angle - (2*math.pi + da)
-        else:
-            a = current_angle + (2*math.pi - da)
-        reload_angle = math.radians(self.options.brush_reload_angle) + a
-        gc.rapid_move(stop_point.x, stop_point.y, a=reload_angle)
-        # Pause to add more paint to the brush
-        gc.dwell(self.options.brush_dwell * 1000)
-        # TODO: backup brush to overlap previous stroke
-        
-        # Rotate brush back to drawing angle
-        gc.rapid_move(stop_point.x, stop_point.y, a=current_angle)
-        if depth is not None:
-            gc.tool_down(depth, self.options.z_wait)
-        self.draw_preview_dot(stop_point.x, stop_point.y, color='#0000ff')
-        # Reset the feed distance count
-        self.feed_distance = 0.0        
-    
-    def export_gcode(self, gc):
-        '''Export the generated g code to a specified file.'''
-        filedir = os.path.expanduser(self.options.directory)
-        filename = os.path.basename(self.options.filename)
-        try:
-            gc.export(filedir, filename,
-                      append_suffix=self.options.append_suffix)
-        except IOError, e:
-            inkex.errormsg(str(e))
-#        file_root, file_ext = os.path.splitext(filename)
-#        if not file_ext:
-#            file_ext = '.ngc'
-#        if layer_name is not None:
-#            file_root += '-' + layer_name
-#        filename = file_root + file_ext
-#        path = os.path.abspath(os.path.join(filedir, filename))
-#        if self.options.append_suffix:
-#            # Get a list of existing files that match the numeric suffix.
-#            # They should already be sorted.
-#            filter_str = '%s-[0-9]*%s' % (file_root, file_ext)
-#            files = fnmatch.filter(os.listdir(filedir), filter_str)
-#            logging.debug('filter: %s [%s]' % (filter_str, str(files)))
-#            if len(files) > 0:
-#                # Get the suffix from the last one and add one to it.
-#                # This seems overly complicated but it takes care of the case
-#                # where the user deletes a file in the middle of the
-#                # sequence which guarantees the newest file is always last.
-#                last_file = files[-1]
-#                file_root, file_ext = os.path.splitext(last_file)
-#                try:
-#                    suffix = int(file_root[-4:]) + 1
-#                except Exception:
-#                    suffix = 0
-#                filename = file_root[:-4] + ('%04d' % suffix) + file_ext
-#                path = os.path.join(filedir, filename)
-#            else:
-#                path = os.path.join(filedir, file_root + '-0000' + file_ext)
-##        logging.debug('path: %s' % path)
-#        
-#        try:
-#            with open(path, 'w') as f:
-#                f.write(gc.gcode)
-#        except Exception:
-#            inkex.errormsg("Can't write to file: %s" % path)
-        
-
-option_info = (
-    ('--active-tab', '', 'store', 'string', 'active_tab', '', ''),
-    
-    ('--units', '', 'store', 'string', 'units', 'in', 'Document units.'),
-    ('--auto-select-paths', '', 'store', 'inkbool', 'auto_select_paths', True, 'Select all paths if nothing is selected.'),
-    ('--biarc-tolerance', '', 'store', 'float', 'biarc_tolerance', '1', 'Biarc approximation fitting tolerance.'),                
-    ('--biarc-maxdepth', '', 'store', 'float', 'biarc_max_depth', '4', 'Biarc approximation maximum curve splitting recursion depth.'),                
-    ('--line-flatness', '', 'store', 'float', 'line_flatness', '0.5', 'Curve to line flatness.'),                
-    ('--min-arc-radius', '', 'store', 'float', 'min_arc_radius', '.01', 'All arcs having radius less than minimum will be considered as straight line'),
-    ('--sort-paths', '', 'store', 'inkbool', 'sort_paths', True, 'Sort paths to minimize rapid moves.'),
-
-    ('--origin-ref', '', 'store', 'string', 'origin_ref', 'paper', 'Lower left origin reference.'),
-    ('--z-scale', '', 'store', 'float', 'z_scale', '1.0', 'Scale factor Z'), 
-    ('--z-offset', '', 'store', 'float', 'z_offset', '0.0', 'Offset along Z'),
-    ('--x-scale', '', 'store', 'float', 'x_scale', '1.0', 'Scale factor X'), 
-    ('--x-offset', '', 'store', 'float', 'x_offset', '0.0', 'Offset along X'),
-    ('--y-scale', '', 'store', 'float', 'y_scale', '1.0', 'Scale factor Y'), 
-    ('--y-offset', '', 'store', 'float', 'y_offset', '0.0', 'Offset along Y'),
-    ('--a-scale', '', 'store', 'float', 'a_scale', '1.0', 'Angular scale along rotational axis'),
-    ('--a-offset', '', 'store', 'float', 'a_offset', '0.0', 'Angular offset along rotational axis'),
+    svg.optargs('--origin-ref', dest='origin_ref', default='paper', help='Lower left origin reference.'),
+    svg.optargs('--z-scale', type='float', dest='z_scale', default=1.0, help='Scale factor Z'), 
+    svg.optargs('--z-offset', type='float', convert_to='world', default=0.0, help='Offset along Z'),
+    svg.optargs('--x-scale', type='float', dest='x_scale', default=1.0, help='Scale factor X'), 
+    svg.optargs('--x-offset', type='float', convert_to='world', default=0.0, help='Offset along X'),
+    svg.optargs('--y-scale', type='float', dest='y_scale', default=1.0, help='Scale factor Y'), 
+    svg.optargs('--y-offset', type='float', convert_to='world', default=0.0, help='Offset along Y'),
+    svg.optargs('--a-scale', type='float', dest='a_scale', default=1.0, help='Angular scale along rotational axis'),
+    svg.optargs('--a-offset', type='float', convert_to='world', default=0.0, help='Angular offset along rotational axis'),
    
-    ('--xy-feed', '', 'store', 'float', 'xy_feed', '10.0', 'XY axis feed rate in unit/s'),
-    ('--z-feed', '', 'store', 'float', 'z_feed', '10.0', 'Z axis feed rate in unit/s'),
-    ('--a-feed', '', 'store', 'float', 'a_feed', '60.0', 'A axis feed rate in deg/s'),
-    ('--z-safe', '', 'store', 'float', 'z_safe', '5.0', 'Z axis safe height for rapid moves'),
-    ('--z-wait', '', 'store', 'float', 'z_wait', '500', 'Z axis wait (milliseconds)'),
+    svg.optargs('--xy-feed', type='float', dest='xy_feed', default=10.0, help='XY axis feed rate in unit/s'),
+    svg.optargs('--z-feed', type='float', dest='z_feed', default=10.0, help='Z axis feed rate in unit/s'),
+    svg.optargs('--a-feed', type='float', dest='a_feed', default=60.0, help='A axis feed rate in deg/s'),
+    svg.optargs('--z-safe', type='float', convert_to='world', default=5.0, help='Z axis safe height for rapid moves'),
+    svg.optargs('--z-wait', type='float', dest='z_wait', default=500, help='Z axis wait (milliseconds)'),
+    svg.optargs('--traj-mode', dest='traj_mode', default='G64', help='Trajectory planning mode.'),
+    svg.optargs('--traj-tolerance', type='float', dest='traj_tolerance', default='0', help='Trajectory blending tolerance.'),
     
-    ('--brush-overshoot-enabled', '', 'store', 'inkbool', 'brush_overshoot_enabled', False, 'Enable brush overshoot.'),
-    ('--brush-overshoot', '', 'store', 'float', 'brush_overshoot', '.5', 'Brushstroke overshoot distance.'),
-    ('--brush-flip-path', '', 'store', 'inkbool', 'brush_flip_path', True, 'Flip after path.'),
-    ('--brush-flip-reload', '', 'store', 'inkbool', 'brush_flip_reload', True, 'Flip after reload.'),
-    ('--brush-reload', '', 'store', 'inkbool', 'brush_reload', True, 'Enable brush reload.'),
-    ('--brush-reload-path', '', 'store', 'inkbool', 'brush_reload_path', True, 'Force brush reload every path.'),
-    ('--brushstroke-max', '', 'store', 'float', 'brushstroke_max', '10', 'Maximum brushstroke distance.'),
-    ('--brushstroke-overlap', '', 'store', 'float', 'brushstroke_overlap', '0', 'Brushstroke overlap.'),
-    ('--brush-dwell', '', 'store', 'float', 'brush_dwell', '0', 'Brush reload time (seconds).'),
-    ('--brush-reload-angle', '', 'store', 'float', 'brush_reload_angle', '90', 'Brush reload angle (degrees).'),
-    ('--brush-size', '', 'store', 'float', 'brush_size', '1', 'Brush size'),
+    svg.optargs('--brush-angle', type='float', convert_to='rad', default=90, help='Brush angle'),
+    svg.optargs('--brush-overshoot-enabled', type='inkbool', dest='brush_overshoot_enabled', default=False, help='Enable brush overshoot.'),
+    svg.optargs('--brush-overshoot', type='float', dest='brush_overshoot', default=0.5, help='Brushstroke overshoot distance.'),
+    svg.optargs('--brush-liftoff-height', type='float', convert_to='world', default=45, help='Brushstroke liftoff height.'),
+    svg.optargs('--brush-liftoff-angle', type='float', convert_to='rad', default=45, help='Brushstroke liftoff angle.'),
+    svg.optargs('--brush-landing-start-height', type='float', convert_to='world', default=45, help='Brushstroke landing start height.'),
+    svg.optargs('--brush-landing-end-height', type='float', convert_to='world', default=45, help='Brushstroke landing end height.'),
+    svg.optargs('--brush-landing-angle', type='float', convert_to='rad', default=45, help='Brushstroke landing angle.'),
+    svg.optargs('--brush-flip-stroke', type='inkbool', dest='brush_flip_stroke', default=True, help='Flip brush before every stroke.'),
+    svg.optargs('--brush-flip-path', type='inkbool', dest='brush_flip_path', default=True, help='Flip after path.'),
+    svg.optargs('--brush-flip-reload', type='inkbool', dest='brush_flip_reload', default=True, help='Flip after reload.'),
+    svg.optargs('--brush-reload', type='inkbool', dest='brush_reload', default=True, help='Enable brush reload.'),
+    svg.optargs('--brush-reload-path', type='inkbool', dest='brush_reload_path', default=True, help='Reload brush after every path.'),
+    svg.optargs('--brushstroke-max', type='float', convert_to='world', default=0.0, help='Maximum brushstroke distance.'),
+    svg.optargs('--brushstroke-overlap', type='float', convert_to='world', default=0.0, help='Brushstroke overlap.'),
+    svg.optargs('--brush-dwell', type='float', dest='brush_dwell', default=0.0, help='Brush reload time (seconds).'),
+    svg.optargs('--brush-reload-angle', type='float', convert_to='rad', default=90.0, help='Brush reload angle (degrees).'),
+    svg.optargs('--brush-size', type='float', convert_to='world', default=1.0, help='Brush size'),
    
-    ('--directory', '', 'store', 'string', 'directory', '~', 'Directory for gcode file'),
-    ('--filename', '', 'store', 'string', 'filename', '-1.0', 'File name'), 
-    ('--append-suffix', '', 'store', 'inkbool', 'append_suffix', True, 'Append auto-incremented numeric suffix to filename'), 
-    ('--separate-layers', '', 'store', 'inkbool', 'separate_layers', True, 'Seaparate gcode file per layer'), 
-    ('--create-log', '', 'store', 'inkbool', 'log_create_log', True, 'Create log files'),
-    ('--log-level', '', 'store', 'string', 'log_level', 'DEBUG', 'Log level'),
-    ('--log-filename', '', 'store', 'string', 'log_filename', 'tcnc.log', 'Full pathname of log file'),
+    svg.optargs('--directory', type='string', dest='directory', default='~', help='Directory for gcode file'),
+    svg.optargs('--filename', type='string', dest='filename', default='untitled', help='File name'), 
+    svg.optargs('--append-suffix', type='inkbool', dest='append_suffix', default=True, help='Append auto-incremented numeric suffix to filename'), 
+    svg.optargs('--separate-layers', type='inkbool', dest='separate_layers', default=True, help='Seaparate gcode file per layer'), 
+    svg.optargs('--create-log', type='inkbool', dest='log_create_log', default=True, help='Create log files'),
+    svg.optargs('--log-level', type='string', dest='log_level', default='DEBUG', help='Log level'),
+    svg.optargs('--log-filename', type='string', dest='log_filename', default='tcnc.log', help='Full pathname of log file'),
    
-    ('--preview-show', '', 'store', 'inkbool', 'preview_show', True, 'Show generated cut paths on preview layer.'),
-    ('--debug-layer', '', 'store', 'inkbool', 'debug_layer', True, 'Create debug layer.'),
-    ('--debug-biarcs', '', 'store', 'inkbool', 'debug_biarcs', True, ''),
+    svg.optargs('--preview-show', type='inkbool', dest='preview_show', default=True, help='Show generated cut paths on preview layer.'),
+    svg.optargs('--debug-layer', type='inkbool', dest='debug_layer', default=True, help='Create debug layer.'),
+    svg.optargs('--debug-biarcs', type='inkbool', dest='debug_biarcs', default=True),
    
-    ('--z-depth', '', 'store', 'float', 'z_depth', '-0.125', 'Z full depth of cut'),
-    ('--z-step', '', 'store', 'float', 'z_step', '-0.125', 'Z cutting step depth'),
-    ('--path-to-gcode-order','', 'store', 'string', 'path_to_gcode_order', 'path by path', 'Defines cutting order path by path or layer by layer.'), 
-    ('--path-to-gcode-depth-function', '', 'store', 'string', 'path_to_gcode_depth_function', 'zd', 'Path to gcode depth function.'),
-    ('--biarc-max-split-depth', '', 'store', 'int', 'biarc_max_split_depth', '4', 'Defines maximum depth of splitting while approximating using biarcs.'),
-)
+    # Unused lagacy options - derived from gcodetools
+    # TODO: use or delete
+    svg.optargs('--z-depth', type='float', convert_to='world', default=-0.125, help='Z full depth of cut'),
+    svg.optargs('--z-step', type='float', convert_to='world', default=-0.125, help='Z cutting step depth'),
+    svg.optargs('--path-to-gcode-order',type='string', dest='path_to_gcode_order', default='path by path', help='Defines cutting order path by path or layer by layer.'), 
+    svg.optargs('--path-to-gcode-depth-function', type='string', dest='path_to_gcode_depth_function', default='zd', help='Path to gcode depth function.'),
+]
 
 tcnc = TCnc(option_info)
 tcnc.affect()

@@ -1,4 +1,4 @@
-'''An extension of the Inkscape extension class.
+"""An extension of the Inkscape extension class.
 Also includes some utility methods that are handy for generating
 SVG output.
 
@@ -17,9 +17,11 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
-'''
+"""
 import logging
 import math
+import gettext
+_ = gettext.gettext
 
 import inkex
 import simpletransform
@@ -27,37 +29,83 @@ import simplepath
 
 logger = logging.getLogger(__name__)
 
-SupportedShapes = ('path', 'rect', 'line', 'circle',
+SUPPORTED_SHAPES = ('path', 'rect', 'line', 'circle',
                    'ellipse', 'polyline', 'polygon')
 
+def optargs(*args, **kwargs):
+    """"""
+    options = [args, kwargs, {}]
+    # Hoist the conversion specs from the optargs
+    if 'convert_from' in kwargs:
+        options[2]['convert_from'] = kwargs['convert_from']
+        del kwargs['convert_from']
+    if 'convert_to' in kwargs:
+        options[2]['convert_to'] = kwargs['convert_to']
+        del kwargs['convert_to']
+    return options
+    
 class SuperEffect(inkex.Effect):
-    '''Sort of a beefed up version of inkex.Effect that includes
+    """Sort of a beefed up version of inkex.Effect that includes
     more handy methods for generating SVG and traversing the inkscape document.
-    '''
-    layer_cache = {}
-    layer_stack = []
+    """
+#    layer_cache = {}
+#    layer_stack = []
     doc_size = None
     doc_units = None
-
+    option_conversions = {}
         
     def __init__(self, option_info=None, *args, **kwargs):
+        """
+        :option_info: a list of optarg arguments specifying plugin options.
+        """
         #super(SuperEffect, self).__init__(*args, **kwargs)
         # Unfortunately inkex.EFfect is declared using old syntax so use old-style init
         inkex.Effect.__init__(self, *args, **kwargs)
         
         # Derived class options will override defaults.
         if option_info:
-            for opt in option_info:
-                self.OptionParser.add_option(opt[0], opt[1], action=opt[2],
-                                             type=opt[3], dest=opt[4],
-                                             default=opt[5], help=opt[6])
+            for optargs in option_info:
+                opt = self.OptionParser.add_option(*optargs[0], **optargs[1])
+                # Perform unit conversion if specified as the last two items
+                # in the option specification tuple.
+                if len(optargs[2]) > 0:
+                    from_unit = optargs[2].get('convert_from')
+                    to_unit = optargs[2].get('convert_to', 'world')
+                    if from_unit == 'doc':
+                        from_unit = self.get_document_units()
+                    self.option_conversions[opt.dest] = (from_unit, to_unit)
 
+    def convert_option_units(self, default_unit_scale=1.0):
+        """Perform any unit conversion on options.
+        :default_unit_scale: the default scale factor if
+        the 'from_unit' is not specified."""
+        for option_name in self.options.__dict__:
+            if option_name in self.option_conversions:
+                from_value = getattr(self.options, option_name)
+                to_value = from_value # default
+                from_unit, to_unit = self.option_conversions[option_name]
+                if from_unit == 'deg' or to_unit == 'rad':
+                    to_value = math.radians(from_value)
+                elif from_unit == 'rad' or to_unit == 'deg':
+                    to_value = math.degrees(from_value)
+                else:
+                    if from_unit == 'doc':
+                        from_unit = self.get_document_units()
+                    if from_unit != 'world':
+                        if not from_unit:
+                            to_value = from_value * default_unit_scale
+                        else:
+                            to_value = from_value * inkex.uuconv[from_unit]
+                    if to_unit != 'world':
+                        to_value /= inkex.uuconv[to_unit]
+                setattr(self.options, option_name, to_value)
+            
 
     def get_canonical_doc_units(self):
-        '''Return the document units. If the document units
-        are "cm" or "m" return "mm". If the doc units are "ft"
-        return "in".
-        '''
+        """Return the document units. If the document units
+        are 'mm', 'cm' or 'm' return 'mm'. If the doc units are 'ft'
+        or 'in' return 'in'.
+        """
         units = self.get_document_units()
         if units == 'ft':
             units = 'in'
@@ -66,7 +114,7 @@ class SuperEffect(inkex.Effect):
         return units
         
     def get_document_units(self):
-        '''Return the Inkscape document units (in, mm, etc.).'''
+        """Return the Inkscape document units (in, mm, etc.)."""
         if self.doc_units is None:
 #            basedoc = self.document.xpath('//sodipodi:namedview[@id="base"]', namespaces=inkex.NSS)
             basedoc = self.getNamedView()
@@ -77,14 +125,14 @@ class SuperEffect(inkex.Effect):
         return self.doc_units
     
     def get_unit_scale(self, units):
-        '''Return the scale factor to scale SVG coordinates to
+        """Return the scale factor to scale SVG coordinates to
         document unit coordinates.
-        '''
+        """
         return 1.0 / inkex.uuconv[units]
     
     def get_document_size(self):
-        '''Return width and height of document in SVG units as a tuple (W, H).
-        '''
+        """Return width and height of document in SVG units as a tuple (W, H).
+        """
         if not self.doc_size:
             x = inkex.unittouu(self.document.getroot().get('width'))
             y = inkex.unittouu(self.document.getroot().get('height'))
@@ -92,55 +140,58 @@ class SuperEffect(inkex.Effect):
         return self.doc_size
     
     def get_document_width(self):
-        '''Return width of document in SVG units.'''
+        """Return width of document in SVG units."""
         return self.get_document_size()[0]
                 
     def get_document_height(self):
-        '''Return height of document in SVG units.'''
+        """Return height of document in SVG units."""
         return self.get_document_size()[1]
                 
     def find_layer(self, layer_name):
-        '''Find and return the layer whose layer name (label) is <layer_name>.
+        """Find and return the layer whose layer name (label) is <layer_name>.
         Returns None if none found.
-        '''
-        layer = self.layer_cache.get(layer_name)
-        if layer is None:
-            layers = self.document.xpath('//svg:g[@inkscape:label="%s"]' %
-                                     layer_name, namespaces=inkex.NSS)
-            # If there is more than one layer with the same name just return
-            # the first one...
-            layer = layers[0] if len(layers) > 0 else None
+        """
+#        layer = self.layer_cache.get(layer_name)
+#        if layer is None:
+        layers = self.document.xpath('//svg:g[@inkscape:label="%s"]' %
+                                 layer_name, namespaces=inkex.NSS)
+        # If there is more than one layer with the same name just return
+        # the first one...
+        layer = layers[0] if len(layers) > 0 else None
         return layer
     
     def clear_layer(self, layer_name):
-        '''Delete the contents of the specified layer.
+        """Delete the contents of the specified layer.
         Does nothing if the layer doesn't exist.
-        '''
+        """
         layer = self.find_layer(layer_name)
         if layer is not None:
             del layer[:]
             
-    def create_layer(self, layer_name, clear=False):
-        '''Create an SVG layer or return an existing layer.
+    def create_layer(self, layer_name, clear=False, incr_suffix=False):
+        """Create an SVG layer or return an existing layer.
         :param parentnode: should be document root node
         :param clear: if a layer of the same name already exists then erase it first
         if True otherwise just return it.
-        '''
+        :param incr_suffix: if a layer of the same name already exists then add an
+        auto-incrementing numeric suffix to the name (overrides <clear>)
+        """
+        # TODO: implement incr_suffix
         layer = self.find_layer(layer_name)
         if layer is None:
             layer = inkex.etree.SubElement(self.document.getroot(), 'g')
             layer.set(inkex.addNS('groupmode', 'inkscape'), 'layer')
             layer.set(inkex.addNS('label', 'inkscape'), layer_name)
-            self.layer_cache[layer_name] = layer
+#            self.layer_cache[layer_name] = layer
         elif clear:
             del layer[:]
         return layer
 
     def set_current_layer(self, layer_name):
-        '''Set the current layer to the specified layer.
+        """Set the current layer to the specified layer.
         If the specified layer doesn't exist then make the default layer
         the current layer.
-        '''
+        """
         layer = self.find_layer(layer_name)
         if layer is None:
             # find the default layer...
@@ -150,20 +201,20 @@ class SuperEffect(inkex.Effect):
             self.current_layer = layer
         
     def get_current_layer(self, default_layer):
-        '''Get the current layer.
+        """Get the current layer.
         If there isn't a current layer then return the specified default layer.
-        '''
+        """
         return self.current_layer if self.current_layer is not None else default_layer
 
     def create_path(self, attrs, layer=None):
-        '''Create an SVG path element in the current layer.'''
+        """Create an SVG path element in the current layer."""
         if layer is None:
             layer = self.current_layer
         if layer is not None:
             return inkex.etree.SubElement(layer, inkex.addNS('path', 'svg'), attrs)
 
     def create_circle(self, cx, cy, radius, style=None, layer=None):
-        '''Create an SVG circle in the current layer.'''
+        """Create an SVG circle in the current layer."""
         attrs = {'r': str(radius), 'cx': str(cx), 'cy': str(cy)}
         if style:
             attrs['style'] = style
@@ -173,16 +224,16 @@ class SuperEffect(inkex.Effect):
             return inkex.etree.SubElement(layer, inkex.addNS('circle', 'svg'), attrs)
     
     def create_line(self, x1, y1, x2, y2, style=None, layer=None):
-        '''Shortcut to create an SVG path consisting of one line segment.'''
+        """Shortcut to create an SVG path consisting of one line segment."""
         attrs = {'d': 'M %5f %5f L %5f %5f' % (x1, y1, x2, y2)}
         if style:
             attrs['style'] = style
         return self.create_path(attrs, layer)
 
     def create_simple_marker(self, marker_id, d, style, transform):
-        '''Create an Inkscape line end marker glyph.
+        """Create an Inkscape line end marker glyph.
         :param parentnode: should be document root node
-        '''
+        """
         docroot = self.document.getroot()
         defs = docroot.find(inkex.addNS('defs', 'svg'))
         if defs is None:
@@ -197,7 +248,7 @@ class SuperEffect(inkex.Effect):
 
 def flatten_nodetree(nodetree, mtransform=[[1.0, 0.0, 0.0],[0.0, 1.0, 0.0]],
                      parent_visibility='visible', skip_layers=None, nodelist=None):
-    '''Recursively traverse an SVG node tree and flatten it to a list of 
+    """Recursively traverse an SVG node tree and flatten it to a list of 
     tuples containing an SVG shape element and it's current layer transform.
     This does a depth-first traversal of <g> and <use> elements.
     Anything besides paths, rectangles, circles, ellipses, lines, polygons,
@@ -206,7 +257,7 @@ def flatten_nodetree(nodetree, mtransform=[[1.0, 0.0, 0.0],[0.0, 1.0, 0.0]],
     
     :param skip_layers: a list of names of layers that should be skipped
     Returns a list of SVG elements.
-    '''
+    """
     if nodelist is None:
         nodelist = []
     for node in nodetree:
@@ -258,7 +309,7 @@ def flatten_nodetree(nodetree, mtransform=[[1.0, 0.0, 0.0],[0.0, 1.0, 0.0]],
                     flatten_nodetree(refnode, mtransform_node,
                                      parent_visibility=v, nodelist=nodelist)
 
-        elif get_node_tag(node) in SupportedShapes:
+        elif get_node_tag(node) in SUPPORTED_SHAPES:
             # Set this node's transform to the combined transform
             #node.set('transform', simpletransform.formatTransform(mtransform_node))
             nodelist.append((node, mtransform_node))
@@ -271,17 +322,17 @@ def flatten_nodetree(nodetree, mtransform=[[1.0, 0.0, 0.0],[0.0, 1.0, 0.0]],
 
 
 def get_node_tag(node):
-    '''Get the node tag stripped of it's namespace part if any'''
+    """Get the node tag stripped of it's namespace part if any"""
     return node.tag.rpartition('}')[2]
 
 
 def convert_rect_to_path(node):
-    '''Convert an SVG rect shape element to a simplepath.
+    """Convert an SVG rect shape element to a simplepath.
     Convert this:
        <rect x="X" y="Y" width="W" height="H"/>
     to this:
        "M X1 Y1 L X1 Y2 L X2 Y2 L X2 Y1 Z"
-    '''
+    """
     x1 = float(node.get('x', 0))
     y1 = float(node.get('y', 0))
     x2 = x1 + float(node.get('width', 0))
@@ -292,12 +343,12 @@ def convert_rect_to_path(node):
 
 
 def convert_line_to_path(node):
-    '''Convert an SVG line shape element to a simplepath.
+    """Convert an SVG line shape element to a simplepath.
     Convert this:
        <line x1="X1" y1="Y1" x2="X2" y2="Y2/>
     to this:
        "MX1 Y1 LX2 Y2"
-    '''
+    """
     x1 = float(node.get('x1', 0))
     y1 = float(node.get('y1', 0))
     x2 = float(node.get('x2', 0))
@@ -307,13 +358,13 @@ def convert_line_to_path(node):
 
 
 def convert_circle_to_path(node, subdivision=1):
-    '''Convert an SVG circle shape element to a simplepath.
+    """Convert an SVG circle shape element to a simplepath.
     The circle is divided into <subdivision> number of circular arcs.
     Convert this:
        <circle r="RX" cx="X" cy="Y"/>
     to this:
        "MX1,CY A RX,0 0 1 0 X2,CY [A ...]"
-    '''
+    """
     r = float(node.get('r', 0))
     cx = float(node.get('cx', 0))
     cy = float(node.get('cy', 0))
@@ -335,13 +386,13 @@ def convert_circle_to_path(node, subdivision=1):
 
 
 def convert_ellipse_to_path(node):
-    '''Convert an SVG ellipse shape element to a path.
+    """Convert an SVG ellipse shape element to a path.
     The ellipse is divided into two 180deg elliptical arcs.
     Convert this:
        <ellipse rx="RX" ry="RY" cx="X" cy="Y"/>
     to this:
        "M X1,CY A RX,RY 0 1 0 X2,CY A RX,RY 0 1 0 X1,CY"
-    '''
+    """
     rx = float(node.get('rx', 0))
     ry = float(node.get('ry', 0))
     cx = float(node.get('cx', 0))
@@ -357,12 +408,12 @@ def convert_ellipse_to_path(node):
 
 
 def convert_polyline_to_path(node):
-    '''Convert an SVG line shape element to a path.
+    """Convert an SVG line shape element to a path.
     Convert this:
        <polyline points="x1,y1 x2,y2 x3,y3 [...]"/>
     to this:
        "M x1 y1 L x2 y2 L x3 y3 [...]"/>
-    '''
+    """
     points = node.get('points', '').split()
     point = points[0].split(',')
     d = [ [ 'M', [float(point[0]), float(point[1])] ], ]
@@ -375,12 +426,12 @@ def convert_polyline_to_path(node):
 
 
 def convert_polygon_to_path(node):
-    '''Convert an SVG line shape element to a path.
+    """Convert an SVG line shape element to a path.
     Convert this:
        <polygon points="x1,y1 x2,y2 x3,y3 [...]"/>
     to this:
        "M x1 y1 L x2 y2 L x3 y3 [...]"/>
-    '''
+    """
     d = convert_polyline_to_path(node)
     #d += ' Z' # close path for polygons
     d.append(['L', d[0][1]])
@@ -388,10 +439,10 @@ def convert_polygon_to_path(node):
 
 
 def convert_element_to_path(node):
-    '''Convert an SVG element into a simplepath.
+    """Convert an SVG element into a simplepath.
     This handles paths, rectangles, circles, ellipses, lines, and polylines.
     Anything else raises and exception.
-    '''    
+    """    
     node_tag = get_node_tag(node) # node tag stripped of namespace part
         
     if node_tag == 'path':
@@ -416,19 +467,19 @@ def convert_element_to_path(node):
         return convert_polygon_to_path(node)
 
     elif node_tag == 'text':
-        raise Exception('Unable to convert text; please convert text to paths first.')
+        raise Exception(_('Unable to convert text; please convert text to paths first.'))
     elif node_tag == 'image':
-        raise Exception('Unable to convert bitmap images; please convert them to line art first.')
+        raise Exception(_('Unable to convert bitmap images; please convert them to line art first.'))
     else:
-        raise Exception('Unable to convert this SVG element to a path: <%s>' % (node.tag))
+        raise Exception(_('Unable to convert this SVG element to a path: <%s>') % (node.tag))
 
 
 def create_path_element(node, d=None, style=None, transform=None):
-    '''Create an SVG path element.
+    """Create an SVG path element.
     If no path is specified then copy it from <node> if <node> is
     a path or convert <node> shape (ie rect, line, etc) into a path.
     Copies style and transform attributes from <node> if none given.
-    '''
+    """
     if d is None:
         d = node.get('d', simplepath.formatPath(convert_element_to_path(node)) )
     newpath = inkex.etree.Element(inkex.addNS('path', 'svg'))
