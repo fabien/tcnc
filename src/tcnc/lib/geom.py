@@ -1,6 +1,8 @@
 """Basic 2D geometry primitives.
 Including a BezierCurve class that implements a curve approximation
 algorithm using biarcs.
+Parts of this library are derived from planar:
+https://bitbucket.org/caseman/planar/
 
 Copyright (C) 2012 Claude Zervas, claude@utlco.com
 
@@ -39,10 +41,10 @@ PHASH_STR = '%%.%df,%%.%df' % (PHASH_RND, PHASH_RND)
 def set_epsilon(epsilon):
     """Set the global absolute error value and rounding limit for approximate
     floating point comparison operations. This value is accessible via the
-    :attr:`planar.EPSILON` global variable.
+    geom.EPSILON global variable.
 
-    The default value of ``0.00001`` is suitable for values
-    that are in the "countable range". You may need a larger
+    The default value of 0.00001 is suitable for values
+    that are in the 'countable range'. You may need a larger
     epsilon when using large absolute values, and a smaller value
     for very small values close to zero. Otherwise approximate
     comparison operations will not behave as expected.
