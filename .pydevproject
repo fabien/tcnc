@@ -10,4 +10,7 @@
 </pydev_pathproperty>
 <pydev_property name="org.python.pydev.PYTHON_PROJECT_VERSION">python 2.7</pydev_property>
 <pydev_property name="org.python.pydev.PYTHON_PROJECT_INTERPRETER">Default</pydev_property>
+<pydev_pathproperty name="org.python.pydev.PROJECT_EXTERNAL_SOURCE_PATH">
+<path>/Library/Python/2.7/site-packages/lxml-2.3.4-py2.7-macosx-10.8-intel.egg</path>
+</pydev_pathproperty>
 </pydev_project>
