@@ -18,8 +18,8 @@
                 <_option value="2">2: obtuse angle sides joined</_option>
                 <_option value="3">3: opposite sides joined to make cross</_option>
                 <_option value="4">4: all sides joined to make rectangle</_option>
-                <_option value="5">5: narrow vertices joined</_option>
-                <_option value="6">6: wide vertices joined</_option>
+                <_option value="5">5: acute angle vertices joined</_option>
+                <_option value="6">6: obtuse angle vertices joined</_option>
                 <_option value="7">7: vertices joined to make cross</_option>
             </param>
             <param name="mid-fat" type="optiongroup" appearance="minimal" _gui-text="Midpoint type for fat diamonds:">
@@ -33,18 +33,22 @@
                 <_option value="7">7: vertices joined to make cross</_option>
             </param>
             <param name="symmetry" type="int" min="0" max="100" _gui-text="Degrees of symmetry:">5</param>
-            <param name="numlines" type="int" min="0" max="100" _gui-text="Number of vector lines:">30</param>
-			<param name="scale" type="float" min="0.0" max="100.0" _gui-text="Output scale:">1.0</param>
-            <param name="flip" type="boolean" _gui-text="Flip by 90 deg:">false</param>
+            <param name="scale" type="float" min="0.0" max="100.0" _gui-text="Output scale:">1.0</param>
+            <param name="rotate" type="float" min="0.0" max="360.0" _gui-text="Rotate:">0.0</param>
             <param name="offset-x" type="float" precision="2" min="-1000" max="1000" _gui-text="X offset:">0</param>
             <param name="offset-y" type="float" precision="2" min="-1000" max="1000" _gui-text="Y offset:">0</param>
+      <!--       <param name="flip" type="boolean" _gui-text="Flip by 90 deg:">false</param> -->
+            <param name="skinnyfat-ratio" type="float" precision="2" min="0.0" max="1.0" _gui-text="Skinny/fat ratio:">0.2</param>
+            <param name="segment-ratio" type="float" precision="2" min="0.0" max="1.0" _gui-text="Segment ratio:">0.5</param>
+            <param name="numlines" type="int" min="0" max="100" _gui-text="Number of vector lines:">30</param>
             <param name="salt-x" type="float" precision="5" min="-10" max="10" _gui-text="X offset salt:">0.2137</param>
             <param name="salt-y" type="float" precision="5" min="-10" max="10" _gui-text="Y offset salt:">0.1132</param>
+            <param name="epsilon" type="float" precision="5" min="0" max="1" _gui-text="Epsilon:">0.0001</param>
 		</page>
 		
         <page name="margins" _gui-text="Margins">
-            <param name="clip-poly" type="boolean" _gui-text="Clip polygons to margins:">True</param>
-            <param name="clip-segments" type="boolean" _gui-text="Clip segments to margins:">True</param>
+            <param name="clip-to-doc" type="boolean" _gui-text="Clip to document:">True</param>
+            <param name="clip-to-margins" type="boolean" _gui-text="Clip to margins:">True</param>
             <param name="clip-to-circle" type="boolean" _gui-text="Circular clip region:">False</param>
             <param name="margin-top" type="float" precision="2" min="-999" max="1000" _gui-text="Top margin:">0</param>
             <param name="margin-left" type="float" precision="2" min="-999" max="1000" _gui-text="Left margin:">0</param>
@@ -57,33 +61,59 @@
             <param name="project-invert" type="boolean" _gui-text="Invert projection:">False</param>
             <param name="project-radius-useclip" type="boolean" _gui-text="Use clip circle for radius:">False</param>
             <param name="project-radius" type="float" precision="2" min="0" max="1000" _gui-text="Radius:">0</param>
+            <param name="blowup-scale" type="float" precision="4" min="-100" max="100" _gui-text="Blow up scale:">1.0</param>
         </page>
         
-        <page name="polygons" _gui-text="Polygon Layer">
-            <param name="draw-polygons" type="boolean" _gui-text="Draw polygons:">true</param>
-            <param name="polygon-segments" type="boolean" _gui-text="Create segment-only layer:">true</param>
-            <param name="fillon" type="boolean" _gui-text="Fill polygons:">false</param>
-            <param name="colorfill" type="boolean" _gui-text="Use color fill (otherwise grayscale):">false</param>
-            <param name="zfill" type="boolean" _gui-text="Polygon type determines fill color:">false</param>
+        <page name="polygons" _gui-text="Polygons">
+            <param name="polygon-draw" type="boolean" _gui-text="Draw polygons:">true</param>
+            <param name="polygon-mult" type="int" min="1" max="10" _gui-text="Number of concentric polygons:">1</param>
+            <param name="polygon-mult-spacing" type="float" precision="4" min="-999" max="1000" _gui-text="Concentric spacing:">0</param>
+            <param name="polygon-fill" type="boolean" _gui-text="Fill polygons:">false</param>
+            <param name="polygon-colorfill" type="boolean" _gui-text="Use color fill (otherwise grayscale):">false</param>
+            <param name="polygon-zfill" type="boolean" _gui-text="Polygon type determines fill color:">false</param>
             <param name="polygon-stroke" type="string" _gui-text="CSS stroke color:">#666666</param>
             <param name="polygon-stroke-width" type="string" _gui-text="CSS stroke width:">.5pt</param>
         </page>
  
-        <page name="segments" _gui-text="Segment Layer">   
-            <param name="draw-segments" type="boolean" _gui-text="Draw segments:">true</param>
+        <page name="layers" _gui-text="Layers">
+            <param name="polyseg-draw" type="boolean" _gui-text="Create polygon segment layer:">true</param>
+            <param name="polyseg-stroke" type="string" _gui-text="CSS stroke color:">#666666</param>
+            <param name="polyseg-stroke-width" type="string" _gui-text="CSS stroke width:">.5pt</param>
+            
+            <param name="L2" type="description">___</param>
+            
+            <param name="polysegpath-draw" type="boolean" _gui-text="Create polygon segment path layer:">true</param>
+            <param name="polysegpath-stroke" type="string" _gui-text="CSS stroke color:">#666666</param>
+            <param name="polysegpath-stroke-width" type="string" _gui-text="CSS stroke width:">.5pt</param>
+            
+            <param name="L3" type="description">___</param>
+            
+            <param name="segment-draw" type="boolean" _gui-text="Draw segments:">true</param>
             <param name="segment-stroke" type="string" _gui-text="CSS stroke color:">#333333</param>
             <param name="segment-stroke-width" type="string" _gui-text="CSS stroke width:">.5pt</param>
-        </page>
-
-        <page name="paths" _gui-text="Path Layer">   
-            <param name="make-paths" type="boolean" _gui-text="Chain segments into paths:">True</param>
-            <param name="min-segments" type="int" min="0" max="10000" _gui-text="Min segments in path:">1</param>
-            <param name="closed-paths" type="boolean" _gui-text="Draw only closed paths:">False</param>
-            <param name="open-path-stroke" type="string" _gui-text="Open path CSS stroke color:">#0000ff</param>
-            <param name="open-path-stroke-width" type="string" min="0.0" max="100.0" _gui-text="Open path CSS stroke width:">1pt</param>
-            <param name="closed-path-stroke" type="string" _gui-text="Closed path CSS stroke color:">#ff0000</param>
-            <param name="closed-path-fill" type="string" _gui-text="Closed path CSS fill color:">#ffffab</param>
-            <param name="closed-path-stroke-width" type="string" min="0.0" max="100.0" _gui-text="Closed path CSS stroke width:">1pt</param>
+            
+            <param name="L4" type="description">___</param>
+            
+            <param name="segpath-draw" type="boolean" _gui-text="Chain segments into paths:">True</param>
+            <param name="segpath-min-segments" type="int" min="0" max="10000" _gui-text="Min segments in path:">1</param>
+            <param name="segpath-stroke" type="string" _gui-text="Open path CSS stroke color:">#0000ff</param>
+            <param name="segpath-stroke-width" type="string" _gui-text="Open path CSS stroke width:">1pt</param>
+            
+            <param name="L5" type="description">___</param>
+            
+            <param name="convex-hull-draw" type="boolean" _gui-text="Draw convex hull:">true</param>
+            <param name="hull-draw" type="boolean" _gui-text="Draw polygon hull:">true</param>
+            <param name="hull-inner-draw" type="boolean" _gui-text="Draw inner polygon hulls:">true</param>
+            <param name="hull-stroke" type="string" _gui-text="CSS stroke color:">#333333</param>
+            <param name="hull-stroke-width" type="string" _gui-text="CSS stroke width:">.5pt</param>
+            
+            <param name="L6" type="description">___</param>
+            
+            <param name="voronoi-draw" type="boolean" _gui-text="Draw Voronoi graph:">true</param>
+            <param name="voronoi-clip-to-hull" type="boolean" _gui-text="Clip to polygon hull:">true</param>
+            <param name="voronoi-make-paths" type="boolean" _gui-text="Make paths from segments:">true</param>
+            <param name="voronoi-stroke" type="string" _gui-text="CSS stroke color:">#333333</param>
+            <param name="voronoi-stroke-width" type="string" _gui-text="CSS stroke width:">.5pt</param>
         </page>
 
         <page name="debug" _gui-text="Debug">

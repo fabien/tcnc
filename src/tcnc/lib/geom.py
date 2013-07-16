@@ -1,42 +1,66 @@
-"""Basic 2D geometry primitives.
-Including a BezierCurve class that implements a curve approximation
-algorithm using biarcs.
-Parts of this library are derived from planar:
+#-----------------------------------------------------------------------------#
+#    Copyright (C) 2012,2013 Claude Zervas
+#    email: claude@utlco.com
+#    
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; either version 2 of the License, or
+#    (at your option) any later version.
+#    
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#    
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the Free Software
+#    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+#-----------------------------------------------------------------------------#
+
+"""Basic 2D geometry primitives and affine transforms.
+
+Parts of this library where inspired by planar, a 2D geometry library for
+python gaming:
 https://bitbucket.org/caseman/planar/
 
-Copyright (C) 2012 Claude Zervas, claude@utlco.com
+.. autosummary::
+    P
+    Line
+    Arc
+    CubicBezier
+    Box
+    Circle
 
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation; either version 2 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+====
 """
-import logging
+
+import sys
 import math
+import logging
 logger = logging.getLogger(__name__)
 
 DEBUG = True
-# This can be set to a svg.SuperEffect during testing/debugging if using
-# Inkscape as a visual/interactive test platform.
-DEBUG_EFFECT = None
-DEBUG_LAYER = None
 
-TransformIdentity2D = [[1.0, 0.0, 0.0],[0.0, 1.0, 0.0]]
-"""2D Tranform Identity Matrix"""
+SVG_CONTEXT = None
+"""svg.SVGContext for drawing output. Default is None."""
 
 EPSILON = 0.00001
-EPSILON2 = EPSILON**2
-PHASH_RND = 5 # Rounding precision for point hash - should correspond to EPSILON
-PHASH_STR = '%%.%df,%%.%df' % (PHASH_RND, PHASH_RND)
+"""Tolerance value for comparing float values."""
+
+# Cached value of PI*2, which is used often
+TWO_PI = 2 * math.pi
+
+# Cached value of EPSILON**2
+_EPSILON2 = EPSILON**2
+
+# These are used to compute hash values for P (point) objects
+_PHASH_M1 = round(1.0 / EPSILON)
+_PHASH_M2 = _PHASH_M1 * 2
+
+# Rounding precision for point hash - should correspond to EPSILON
+_EPSILON_PRECISION = 5
+# String representation of a point using current EPSILON precision
+_EPSILON_POINT_STR = '%%.%df, %%.%df' % (_EPSILON_PRECISION, _EPSILON_PRECISION)
 
 def set_epsilon(epsilon):
     """Set the global absolute error value and rounding limit for approximate
@@ -49,36 +73,153 @@ def set_epsilon(epsilon):
     for very small values close to zero. Otherwise approximate
     comparison operations will not behave as expected.
     """
-    global EPSILON, EPSILON2, PHASH_RND, PHASH_STR
+    global EPSILON, _EPSILON2, _PHASH_M1, _PHASH_M2, _EPSILON_PRECISION, _EPSILON_POINT_STR
     EPSILON = float(epsilon)
-    EPSILON2 = EPSILON**2
+    _EPSILON2 = EPSILON**2
+    _PHASH_M1 = round(1.0 / EPSILON)
+    _PHASH_M2 = _PHASH_M1 * 2
     precision = 0
     while epsilon < 1.0:
         precision += 1
         epsilon *= 10
-    PHASH_RND = precision
-    PHASH_STR = '%%.%df,%%.%df' % (PHASH_RND, PHASH_RND)
+    _EPSILON_PRECISION = max(0, precision - 1)
+    _EPSILON_POINT_STR = '%%.%df, %%.%df' % (_EPSILON_PRECISION, _EPSILON_PRECISION)
 
 def float_eq(a, b):
     """Compare two floats for equality.
     The two float are considered equal if the difference between them is
     less than EPSILON.
+    
+    For a discussion of floating point comparisons see:
+        http://randomascii.wordpress.com/2012/02/25/comparing-floating-point-numbers-2012-edition/
     """
-#    if a < EPSILON or b < EPSILON:
-#        # for tiny values use a smaller epsilon
-#        return abs(a - b) < EPSILON2
+#    norm = max(abs(a), abs(b))
+#    return (norm < EPSILON) or (abs(a - b) < (EPSILON * norm))
     return abs(a - b) < EPSILON
 
+def float_round(n):
+    """Round the value to a rounding precision corresponding to EPSILON"""
+    return round(n, _EPSILON_PRECISION)
+    
+    
+IdentityTransform2D = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0))
+"""2D tranform identity matrix"""
+
+def compose_transform(M1, M2):
+    """Combine two matrices by multiplying them.
+    
+    :param M1: 2X3 2D transform matrix
+    :param M2: 2X3 2D transform matrix
+    """
+    a11 = M1[0][0]*M2[0][0] + M1[0][1]*M2[1][0]
+    a12 = M1[0][0]*M2[0][1] + M1[0][1]*M2[1][1]
+    a21 = M1[1][0]*M2[0][0] + M1[1][1]*M2[1][0]
+    a22 = M1[1][0]*M2[0][1] + M1[1][1]*M2[1][1]
+    v1 = M1[0][0]*M2[0][2] + M1[0][1]*M2[1][2] + M1[0][2]
+    v2 = M1[1][0]*M2[0][2] + M1[1][1]*M2[1][2] + M1[1][2]
+    return ((a11, a12, v1), (a21, a22, v2))
+
+# Affine transforms
+def matrix_rotate_2d(angle):
+    """Create a transform matrix to rotate about the origin.
+    
+    :param angle: rotation angle in radians
+    """
+    cos_a = math.cos(angle)
+    sin_a = math.sin(angle)
+    return ((cos_a, -sin_a, 0), (sin_a, cos_a, 0))
+
+def matrix_translate_2d(x, y):
+    """Create a transform matrix to translate (move).
+    
+    :param x: translation along X axis
+    :param y: translation along Y axis
+    """
+    return ((1.0, 0, x), (0, 1.0, y))
+
+def matrix_scale_2d(scale_x, scale_y):
+    """Create a transform matrix to scale.
+    
+    :param scale_x: X axis scale factor
+    :param scale_y: Y axis scale factor
+    """
+    return ((scale_x, 0, 0), (0, scale_y, 0))
+
+def matrix_scale_translate_2d(scale_x, scale_y, offset_x, offset_y):
+    """Create a transform matrix to scale and translate.
+    
+    :param scale_x: X axis scale factor
+    :param scale_y: Y axis scale factor
+    :param offset_x: translation along X axis
+    :param offset_y: translation along Y axis
+    """
+    return ((scale_x, 0, offset_x), (0, scale_y, offset_y))
+
+def matrix_rotate_2d_point(angle, p):
+    """Return a matrix to rotate about the given point.
+
+    :param angle: rotation angle in radians
+    :param p: center point around which to rotate
+    """
+    m1 = matrix_translate_2d(-p.x, -p.y)
+    m2 = matrix_rotate_2d(angle)
+    m3 = matrix_translate_2d(p.x, p.y)
+    m4 = compose_transform(m2, m1)
+    m5 = compose_transform(m3, m4)
+    return m5
+
+def matrix_scale_2d_point(scale_x, scale_y, p):
+    """Return a matrix to scale from the given point.
+    
+    :param scale_x: X axis scale factor
+    :param scale_y: Y axis scale factor    
+    :param p: point from which to scale. Often a centroid.
+    """
+    m1 = matrix_translate_2d(-p.x, -p.y)
+    m2 = matrix_scale_2d(scale_x, scale_y)
+    m3 = matrix_translate_2d(p.x, p.y)
+    m4 = compose_transform(m2, m1)
+    m5 = compose_transform(m3, m4)
+    return m5
+
+def matrix_apply_to_point(matrix, p):
+    """Return a copy of :point: with the transform matrix applied to it."""
+    return P(matrix[0][0]*p[0] + matrix[0][1]*p[1] + matrix[0][2],
+             matrix[1][0]*p[0] + matrix[1][1]*p[1] + matrix[1][2])
+
+
+def normalize_angle(angle, center):
+    """Normalize ``angle`` (in radians) about a 2*PI interval centered
+    at ``center``.
+    
+    Angle between 0 and 2*PI:
+        normalize_angle(angle, center=math.pi)
+    Angle between -PI and PI:
+        normalize_angle(angle, center=0.0)
+        
+    :param angle: Angle to normalize
+    :type angle: float
+    :param center: Center value about which to normalize
+    :type center: float
+    """
+    return angle - TWO_PI * math.floor((angle + math.pi - center) / TWO_PI)
 
 class P(tuple):
     """Two dimensional immutable point (vector).
+    
+    Represented as a simple tuple (x, y) so that it is compatible with many
+    other libraries.
+
+    If ``y`` is None ``x`` is assumed to be a tuple or list containing
+    both x and y.
     
     :param x: x coordinate.
     :type x: float
     :param y: y coordinate.
     :type y: float
     """
-    def __new__(self, x, y=None):
+    def __new__(cls, x, y=None):
+        """"""
         if y is None:
             return tuple.__new__(P, ((float(x[0]), float(x[1]))))
         else:
@@ -95,9 +236,23 @@ class P(tuple):
         return self[1]
     
     @staticmethod
+    def Max():
+        """Create a point with max x and y values."""
+        return P(sys.float_info.max, sys.float_info.max)
+    
+    @staticmethod
+    def Min():
+        """Create a point with min x and y values."""
+        return P(sys.float_info.min, sys.float_info.min)
+    
+    @staticmethod
     def from_polar(r, angle):
         """Create a Cartesian point from polar coordinates.
+        
         See http://en.wikipedia.org/wiki/Polar_coordinate_system
+        
+        :param r: magnitude (radius)
+        :param angle: angle in radians
         """
         x = r * math.cos(angle)
         y = r * math.sin(angle)
@@ -105,7 +260,7 @@ class P(tuple):
     
     def to_polar(self):
         """Return the polar coordinates of this point as a tuple
-        containing the length and angle respectively (r, a).
+        containing the magnitude and angle respectively (r, a).
         """
         return (self.length(), self.angle())
         
@@ -119,6 +274,7 @@ class P(tuple):
 
     def almost_equal(self, other):
         """Compare vectors for approximate equality.
+        
         :param other: Vector being compared.
         :type other: P
         :return: True if distance between the vectors < ``EPSILON``.
@@ -126,7 +282,7 @@ class P(tuple):
         try:
             dx = self[0] - other[0]
             dy = self[1] - other[1]
-            return (dx*dx + dy*dy) < EPSILON2
+            return (dx*dx + dy*dy) < _EPSILON2
         except:
             return False
 
@@ -145,54 +301,75 @@ class P(tuple):
         :rtype: P
         """
         L2 = self.length2()
-        if L2 > EPSILON2:
+        if L2 > _EPSILON2:
             L = math.sqrt(L2)
             return P(self[0] / L, self[1] / L)
         else:
             return P(0.0, 0.0)
         
-    def normal(self):
-        """Return a vector perpendicular to this one."""
-        return P(-self[1], self[0])
+    def normal(self, left=True):
+        """Return a vector perpendicular to this one.
+        :left: left of vector, otherwise right."""
+        if left:
+            return P(-self[1], self[0])
+        else:
+            return P(self[1], -self[0])
 
     def dot(self, other):
         """Compute the dot product with another vector.
+        
         See http://en.wikipedia.org/wiki/Dot_product
+        
         :param other: The vector with which to compute the dot product.
         :type other: P
         :rtype: float
         """
         x2, y2 = other
-        return self[0] * x2 + self[1] * y2
+        return self[0]*x2 + self[1]*y2
     
     def cross(self, other):
         """Compute the cross product with another vector.
         Also called the perp-dot product for 2D vectors.
         Also called determinant for 2D matrix.
-        See http://mathworld.wolfram.com/PerpDotProduct.html
-        See http://www.gamedev.net/topic/441590-2d-cross-product/     
+        
+        See:
+            http://mathworld.wolfram.com/PerpDotProduct.html
+            http://www.gamedev.net/topic/441590-2d-cross-product/
+         
         :param other: The vector with which to compute the cross product.
         :type other: P
         :rtype: float
         """
         x2, y2 = other
-        return self[0] * y2 - x2 * self[1]
+        return self[0]*y2 - x2*self[1]
     
     def angle(self):
         """Return the angle of this vector to x axis in radians."""
         return math.atan2(self[1], self[0])
     
     def angle2(self, p1, p2):
-        """Return the angle between the two given vectors using this
-        point as the origin.
+        """The angle formed by p1->self->p2.
+        
+        The angle is negative if p1 is to the left of p2.
+
+        :return: an angle between -math.pi and math.pi.
         """
         v1 = (p1 - self)#.unit()
         v2 = (p2 - self)#.unit()
         #a = math.acos(v1.dot(v2))
         # Apparently this is more accurate for angles near 0 or PI:
         # see http://www.mathworks.com/matlabcentral/newsreader/view_thread/151925
-        a = math.atan2(v1.cross(v2), v1.dot(v2))
-        return a
+        return math.atan2(v1.cross(v2), v1.dot(v2))
+    
+    def ccw_angle2(self, p1, p2):
+        """The counterclockwise angle formed by p1->self->p2.
+        
+        :return: an angle between 0 and 2*math.pi.
+        """
+        if p1 == p2:
+            return 0.0
+        a = self.angle2(p1, p2)
+        return a if a > 0.0 else a + TWO_PI
             
     def distance(self, other):
         """Euclidean distance to other point."""
@@ -208,8 +385,10 @@ class P(tuple):
     def distance_to_line(self, p1, p2):
         """Euclidean distance from this point to it's projection on a line
         that intersects the given points.
-        See http://mathworld.wolfram.com/Point-LineDistance2-Dimensional.html
-        http://local.wasp.uwa.edu.au/~pbourke/geometry/pointline/
+        
+        See:
+            http://mathworld.wolfram.com/Point-LineDistance2-Dimensional.html
+            http://local.wasp.uwa.edu.au/~pbourke/geometry/pointline/
         """
         v1 = p2 - p1 # Normalize the line segment
         seglen = v1.length()   # Segment length
@@ -222,18 +401,32 @@ class P(tuple):
     def distance_to_segment(self, p1, p2):
         """Euclidean distance from this point to a line segment defined by
         the given start and end points.
+        
         If this point's projection doesn't fall on the line segment then
         this returns the distance from this point to the closest segment
         endpoint.
+        
         This method is useful for determining bezier curve flatness
         """
         seg = Line(p1, p2)
         return seg.distance_to_point(self, segment=True)
     
+    def projection(self, p):
+        """Return the distance from the origin that corresponds to
+        the projection of the specified point on to the line described by
+        this vector.
+        """
+        # Check for the degenerate case where the vector has zero length
+        L2 = self.length2()
+        if L2 < _EPSILON2:
+            return 0
+        return p.dot(self) / L2
+    
     def inside_triangle2D(self, A, B, C):
         """Return True if this point lies inside the triangle defined
         by points A, B, and C.
         Where ABC is clockwise or counter-clockwise.
+        
         See http://www.sunshine2k.de/stuff/Java/PointInTriangle/PointInTriangle.html
         """
         # Using barycentric coordinates
@@ -244,6 +437,15 @@ class P(tuple):
         s = v1.cross(v3) / det
         t = v2.cross(v3) / det
         return s >= 0.0 and t >= 0.0 and (s+t) <= 1
+    
+    def orientation(self, q, r):
+        """Return positive if self->q->r is clockwise, negative if counterclockwise,
+        zero if colinear."""
+        return (q - self).cross(r - self)
+
+    def transform(self, matrix):
+        """Return a copy of this point with the transform matrix applied to it."""
+        return matrix_apply_to_point(matrix, self)
 
     def __eq__(self, other):
         """Compare for equality."""
@@ -251,13 +453,17 @@ class P(tuple):
         # and other geometric comparisons work as expected.
         # There may be cases where an exact compare is necessary but for
         # most purposes (like collision detection) this works better.
-        return self.almost_equal(other)
+        return other is not None and self.almost_equal(other)
 #        try:
 #            x2, y2 = other
 #            return self[0] == x2 and self[1] == y2
 #        except:
 #            return False
 
+    def __ne__(self, other):
+        """Compare for inequality."""
+        return other is None or not self.almost_equal(other)
+    
     def __nonzero__(self):
         """Return True if this is not a null vector (x!=0 and y!=0)."""
         return self[0] > EPSILON or self[1] > EPSILON
@@ -358,29 +564,30 @@ class P(tuple):
 
     def __str__(self):
         """Concise string representation."""
-        return "P(%.4f, %.4f)" % self
+        return "P(%s)" % (_EPSILON_POINT_STR % self)
 
     def __repr__(self):
         """Precise string representation."""
         return "P(%r, %r)" % self
     
     def __hash__(self):
-#        hashval = (PHASH_STR % (self[0], self[1])).__hash__()
-        # This is from http://www.beosil.com/download/CollisionDetectionHashing_VMV03.pdf
-        # TODO: consider http://www.boost.org/doc/libs/1_46_1/boost/functional/hash/detail/hash_float_generic.hpp
-        # This seems to work pretty well and is very fast.
-        a = int(self[0] * 73856093)
-        b = int(self[1] * 83492791)
+#        hashval = (_EPSILON_POINT_STR % (self[0], self[1])).__hash__()
+#        # This is from http://www.beosil.com/download/CollisionDetectionHashing_VMV03.pdf
+#        a = int(self[0] * 73856093)
+#        b = int(self[1] * 83492791)
+#        hashval = a ^ b
+        a = int(self[0] * _PHASH_M1)
+        b = int(self[1] * _PHASH_M2)
         hashval = a ^ b
         return hashval
     
 #    __hash__ = tuple.__hash__ # hash is not inherited in Py 3
     
-    def SVG_plot(self, color='#000000'):
+    def svg_plot(self, color='#000000'):
         """Draw a dot. Useful for debugging and testing."""
-        if DEBUG_EFFECT is not None and DEBUG_LAYER is not None:
-            style = 'fill:%s;stroke:none' % (color,)
-            DEBUG_EFFECT.create_circle(self.x, self.y, '.75pt', style, DEBUG_LAYER)
+        if SVG_CONTEXT is not None:
+            SVG_CONTEXT.create_circle(self.x, self.y, '2pt',
+                                       style='fill:%s;stroke:none' % color)
         
 
 # Make some method aliases to be compatible with various Point implementations
@@ -388,16 +595,38 @@ P.mag = P.length
 P.normalized = P.unit
 P.perpendicular = P.normal
 
-class Shape(tuple):
-    """Base class of the geometric shapes.
-    This just defines some virtual methods that subclasses
-    should implement."""
-    def start_tangent(self):
-        """Return the angle in radians of a line tangent to this shape
-        beginning at the first point."""
-        return 0.0
+#class Shape(tuple):
+#    """Base class of the geometric shapes.
+#    This just defines some virtual methods that subclasses
+#    should implement."""
+#    def transform(self, matrix):
+#        """Return a copy of this shape with the transform matrix applied to it.
+#        """
+#        raise Exception('unimplemented') 
+#
+#    def bounding_box(self):
+#        """Return the bounding box of this shape.
+#        The bounding box is aligned to the X and Y axes, use min_bounding_box()
+#        to calculate the minimum (possibly rotated) bounding box.
+#        """
+#        raise Exception('unimplemented')
+#    
+#class PathShape(Shape):
+#    """Base class of the geometric shapes used in paths:
+#    (Line, Arc, CubicBezier.)
+#    This just defines some virtual methods that subclasses
+#    should implement."""
+#    def start_tangent_angle(self):
+#        """Return the angle in radians of a line tangent to this shape
+#        beginning at the first point."""
+#        raise Exception('unimplemented')
+#
+#    def reversed(self):
+#        """Return a new shape with component points reversed."""
+#        raise Exception('unimplemented')
+#        
 
-class Line(Shape):
+class Line(tuple):
     """Two dimensional immutable line segment defined by two points.
     
     :param p1: start point.
@@ -405,8 +634,13 @@ class Line(Shape):
     :param p2: end point.
     :type p2: P
     """
-    def __new__(self, p1, p2):
+    def __new__(cls, p1, p2):
         return tuple.__new__(Line, (P(p1), P(p2)))
+    
+    @staticmethod
+    def from_polar(startp, length, angle):
+        """Create a Line given a start point, magnitude (length), and angle."""
+        return Line(startp, startp + P.from_polar(length, angle))
 
     @property
     def p1(self):
@@ -430,11 +664,23 @@ class Line(Shape):
         """Return the angle of this line segment in radians."""
         return (self.p2 - self.p1).angle()
     
-    def start_tangent(self):
+    def start_tangent_angle(self):
         """Return the direction of this line segment in radians.
         This is the same as the angle"""
         return self.angle()
     
+    def end_tangent_angle(self):
+        """Return the direction of this line segment in radians.
+        This is the same as the angle"""
+        return self.angle()
+    
+    def bounding_box(self):
+        return Box(self.p1, self.p2)
+    
+    def transform(self, matrix):
+        """Return a copy of this line with the transform matrix applied to it."""
+        return Line(self[0].transform(matrix), self[1].transform(matrix))
+
     def midpoint(self):
         """Return the midpoint of the line segment defined by p1 and p2"""
         #return P((self.p1.x + self.p2.x) / 2, (self.p1.y + self.p2.y) / 2)
@@ -451,6 +697,71 @@ class Line(Shape):
         bp1 = midp + P(p1.y, -p1.x)
         bp2 = midp + P(p2.y, -p2.x)
         return Line(bp1, bp2)
+    
+#    def angle_bisector(self, line2, length):
+#        """Return a line that bisects the angle formed by two lines that
+#        share a start point.
+#        This will raise an exception if the lines do not intersect at the
+#        start point.
+#        """
+#        if self.p1 != line2.p1:
+#            raise Exception('Line segments must share a start point.')
+#        angle = self.p2.angle2(self.p1, line2.p2) / 2
+#        return Line.from_polar(self.p2, length, angle)
+                
+    def offset(self, offset):
+        """Return a Line parallel to this one and offset by :offset:.
+        If offset is < 0 the offset line will be to the right of this line,
+        otherwise to the left."""
+        u = offset / self.length()
+        v1 = (self.p2 - self.p1) * u
+        p1 = v1.normal() + self.p1
+        v2 = (self.p1 - self.p2) * u
+        p2 = v2.normal(left=False) + self.p2
+        return Line(p1, p2)
+    
+    def subdivide(self, u):
+        """Subdivide this line into two lines at the given unit distance from
+        the start point.
+        Returns a tuple containing two Lines.
+        """
+        assert(0.0 < u and u < 1.0)
+        p = self.point_at(u)
+        return (Line(self.p1, p), Line(p, self.p2))
+    
+    def point_at(self, u):
+        """Return the point that is unit distance :u: from this segment's
+        first point. The segment's first point would be at u=0.0 and the
+        second point would be at u=1.0.
+        """
+        return self.p1 + (self.p2 - self.p1)*u
+    
+    def projection(self, p):
+        """Return the unit distance from this segment's first point that
+        corresponds to the projection of the specified point on to this line.
+        Returns a value between 0.0 and 1.0 if the projection lies between
+        the segment endpoints.
+        The return value will be < 0.0 if the projection lies south of the
+        first point, and > 1.0 if it lies north of the second point.
+        """
+        v1 = self.p2 - self.p1
+        return v1.projection(p - self.p1)
+    
+    def projection_point(self, p, segment=False):
+        """Return the point on this line segment
+        that corresponds to the projection of the specified point.
+        If <segment> is True then if the point projection does not lie
+        within the two points that define this line segment return the
+        closest endpoint.
+        """
+        v1 = self.p2 - self.p1
+        u = v1.projection(p - self.p1)
+        if segment:
+            if u <= 0:
+                return self.p1
+            elif u >= 1.0:
+                return self.p2
+        return self.p1 + v1*u
 
     def distance_to_point(self, p, segment=False):
         """Return the Euclidian distance from the spcified point and
@@ -461,19 +772,22 @@ class Line(Shape):
         See http://mathworld.wolfram.com/Point-LineDistance2-Dimensional.html
         http://local.wasp.uwa.edu.au/~pbourke/geometry/pointline/
         """
-        v1 = self.p2 - self.p1 # Normalize the line segment
-        v2 = p - self.p1 # Normalize the point vector
-        L2 = v1.length2()
-        if L2 < EPSILON2: # Segment points are coincident?
-            return self.p1.distance(p)
-        u = v2.dot(v1) / v1.length2() # Projection (0->1) on to segment
-        if u < 0: # Projection not on segment but nearer to p1?
-            return self.p1.distance(p)
-        elif u > 1.0: # Projection not on segment but nearer to p2?
-            return self.p2.distance(p)
-        p_proj = self.p1 + v1 * u # Point of projection on line segment
-        d = p.distance(p_proj) # distance between point and projection
-        return d
+#        v1 = self.p2 - self.p1 # Normalize the line segment
+#        # Check for the degenerate case where segment endpoints are coincident
+#        L2 = v1.length2()
+#        if L2 < _EPSILON2:
+#            return self.p1.distance(p)
+#        v2 = p - self.p1 # Normalize the point vector
+#        u = v2.dot(v1) / L2 # Projection (0->1) on to segment
+#        if segment:
+#            if u <= 0: # Projection not on segment but nearer to p1?
+#                return self.p1.distance(p)
+#            elif u >= 1.0: # Projection not on segment but nearer to p2?
+#                return self.p2.distance(p)
+#        p_proj = self.p1 + v1*u # Point of projection on line segment
+#        d = p.distance(p_proj) # distance between point and projection
+#        return d
+        return self.projection_point(p, segment).distance(p)
         
     def intersection(self, other, segment=False):
         """Return the intersection point (if any) of this line and another line.
@@ -507,6 +821,11 @@ class Line(Shape):
         y = y1 + mua * (y2 - y1)
         
         return P(x, y)
+    
+    def which_side(self, p):
+        """Return 1 if the point lies to the right of this line else -1."""
+        v1 = self.p2 - self.p1
+        return 1 if v1.cross(p - self.p1) >= 0 else -1
 
     def same_side(self, pt1, pt2):
         """Return True if the given points lie on the same side of this line.
@@ -520,7 +839,7 @@ class Line(Shape):
         c2 = v1.cross(v3)
         return (c1 >=0 and c1 >= 0) or (c1 < 0 and c2 < 0)
     
-    def reverse(self):
+    def reversed(self):
         """Return a Line segment with start and end points reversed."""
         return Line(self.p2, self.p1)
         
@@ -530,9 +849,10 @@ class Line(Shape):
         # Compare both directions
         same = (self.p1.almost_equal(other[0]) and self.p2.almost_equal(other[1])) \
             or (self.p1.almost_equal(other[1]) and self.p2.almost_equal(other[0]))
-        logger.debug('segment: %s == %s' % (str(self), str(other)))
-        if same:
-            logger.debug('segment same')
+#        if same:
+#            logger.debug('segment: %s == %s' % (str(self), str(other)))
+#            if hash(self) != hash(other):
+#                logger.debug('mismatching hash: %d != %d' % (hash(self), hash(other)))
         return same
 
     def __hash__(self):
@@ -543,33 +863,35 @@ class Line(Shape):
 
     def __str__(self):
         """Concise string representation."""
-        return "Line(P(%.4f, %.4f), P(%.4f, %.4f))" % (self.p1[0], self.p1[1], self.p2[0], self.p2[1])
+        return "Line(%s, %s)" % (str(self.p1), str(self.p2))
 
     def __repr__(self):
         """Precise string representation."""
         return "Line(P(%r, %r), P(%r, %r))" % (self.p1[0], self.p1[1], self.p2[0], self.p2[1])
 
-    def to_SVG_path(self):
+    def to_svg_simplepath(self):
+        """Return the SVG simplepath segment for this shape."""
+        return ('L', (self.p2.x, self.p2.y))
+                
+    def to_svg_path(self):
         """Return a string with the SVG path 'd' attribute
         that corresponds with this line.
         """
         return 'M %f %f L %f %f' % (self.p1.x, self.p1.y, self.p2.x, self.p2.y)
     
-    def SVG_plot(self, color='#cccc99'):
+    def svg_plot(self, color='#cccc99'):
         """Draw an SVG line for debugging/testing"""
-        if DEBUG_EFFECT is not None and DEBUG_LAYER is not None:
+        if SVG_CONTEXT is not None:
             style = 'fill:none;stroke:%s;stroke-width:0.25pt;stroke-opacity:1' % (color,)
-            attrs = {'d': self.to_SVG_path(), 'style': style}
-            DEBUG_EFFECT.create_path(attrs, layer=DEBUG_LAYER)
+            attrs = {'d': self.to_svg_path(), 'style': style}
+            SVG_CONTEXT.create_path(attrs)
         
 
-class Rectangle(Shape):
-    """Two dimensional immutable rectangle defined by two points
-    and an optional angle of rotation.
-    The first point is the lower left corner,
-    the second is the upper right.
+class Box(tuple):
+    """Two dimensional immutable rectangle defined by two points,
+    the lower left corner and the upper right corner respectively.
     """
-    def __new__(self, p1, p2, angle=0.0):
+    def __new__(cls, p1, p2):
         # Canonicalize the point order so that p1 is
         # always lower left.
         if p1[0] <= p2[0]:
@@ -584,7 +906,7 @@ class Rectangle(Shape):
         else:
             y1 = p2[1]
             y2 = p1[1]
-        return tuple.__new__(Rectangle, (P(x1, y1), P(x2, y2), angle))
+        return tuple.__new__(Box, (P(x1, y1), P(x2, y2)))
     
     @property
     def p1(self):
@@ -595,7 +917,23 @@ class Rectangle(Shape):
     def p2(self):
         """The second corner of rectangle."""
         return self[1]
+
+    @property
+    def xmin(self):
+        return self[0][0]
     
+    @property
+    def xmax(self):
+        return self[1][0]
+
+    @property
+    def ymin(self):
+        return self[0][1]
+    
+    @property
+    def ymax(self):
+        return self[1][1]
+        
     def height(self):
         """Height of rectangle. (along Y axis)"""
         return self[1][1] - self[0][1]
@@ -619,16 +957,78 @@ class Rectangle(Shape):
             if not self.point_inside(p):
                 return False
         return True
+    
+    def transform(self, matrix):
+        """Return a copy of this box with the transform matrix applied to it."""
+        return Box(self[0].transform(matrix), self[1].transform(matrix))
+    
+    def clip_line(self, line):
+        """If the given line segment is clipped by this rectangle then
+        return a new line segment with clipped end-points.
+        If the line segment is entirely within the rectangle this
+        returns the same (unclipped) line segment.
+        If the line segment is entirely outside the rectangle this
+        returns None.
+        Uses the Liang-Barsky line clipping algorithm and translates C++ code
+        from: http://hinjang.com/articles/04.html
+        """
+        if self.line_inside(line):
+            return line
+        x1 = line.p1.x
+        y1 = line.p1.y
+        x2 = line.p2.x
+        y2 = line.p2.y
+        dx = x2 - x1
+        dy = y2 - y1
+        u_minmax = [0.0, 1.0]
+        if (self._clipT(self.xmin - x1, dx, u_minmax) and \
+            self._clipT(x1 - self.xmax, -dx, u_minmax) and \
+            self._clipT(self.ymin - y1, dy, u_minmax) and \
+            self._clipT(y1 - self.ymax, -dy, u_minmax)):
+            if u_minmax[1] < 1.0:
+                x2 = x1 + u_minmax[1] * dx
+                y2 = y1 + u_minmax[1] * dy
+            if u_minmax[0] > 0.0:
+                x1 += u_minmax[0] * dx
+                y1 += u_minmax[0] * dy
+            return Line(P(x1, y1), P(x2, y2))
+        return None
+    
+    def _clipT(self, nQ, nP, u_minmax):
+        """Lian-Barsky helper"""
+        if float_eq(nP, 0.0):
+            # line is parallel to box edge - is it outside the box?
+            return nQ <= 0.0
+        u = nQ / nP
+        if nP > 0.0:
+            # line goes from inside box to outside
+            if u > u_minmax[1]:
+                return False
+            elif u > u_minmax[0]:
+                u_minmax[0] = u
+        else:
+            # line goes from outside to inside
+            if u < u_minmax[0]:
+                return False
+            elif u < u_minmax[1]:
+                u_minmax[1] = u
+        return True
 
-    def start_tangent(self):
+    def start_tangent_angle(self):
         """Return the angle in radians of a line tangent to this shape
         beginning at the first point.
         The corner point order for rectangles is clockwise from lower left.
         """
-        return self[2] + math.pi/2
+        return math.pi/2
     
+    def bounding_box(self):
+        return self
+    
+#    def transform(self, matrix):
+#        """Return a copy of this rectangle with the transform matrix applied to it."""
+#        return Rectangle(self[0].transform(matrix), self[1].transform(matrix))
 
-class Arc(Shape):
+class Arc(tuple):
     """Two dimensional immutable circular arc segment.
     
     :param p1: start point.
@@ -636,7 +1036,7 @@ class Arc(Shape):
     :param p2: end point.
     :type p2: P
     """
-    def __new__(self, p1, p2, radius, angle, center=None):
+    def __new__(cls, p1, p2, radius, angle, center=None):
         if center is None:
             center = Arc._center(p1, p2, radius, angle)
         return tuple.__new__(Arc, (P(p1), P(p2), radius, angle, P(center)))
@@ -651,7 +1051,7 @@ class Arc(Shape):
         angle = 2 * p1.angle2(ptan, p2)
         chord_len = p1.distance(p2)
         if chord_len < EPSILON or p1.distance(ptan) < EPSILON:
-            logging.debug('degenerate arc: angle=%.5f, p1=(%.5f, %.5f), t=(%.4f,%.4f), p2=(%.4f,%.4f), reverse=%s' % \
+            logger.debug('degenerate arc: angle=%.5f, p1=(%.5f, %.5f), t=(%.4f,%.4f), p2=(%.4f,%.4f), reverse=%s' % \
                           (angle, p1.x, p1.y, ptan.x, ptan.y, p2.x, p2.y, str(reverse)))
             return None
         radius = abs(chord_len / (2 * math.sin(angle / 2)))
@@ -731,13 +1131,34 @@ class Arc(Shape):
         """Return True if this arc is clockwise."""
         return self.angle < 0
     
-    def start_tangent(self):
-        """Return the direction of this arc segment in radians.
+    def start_tangent_angle(self):
+        """Return the start direction of this arc segment in radians.
         This is the angle of a tangent vector at the arc segment's
         first point."""
         v = self.center - self.p1 if self.is_clockwise() else self.p1 - self.center
         return v.angle() + math.pi/2
         
+    def end_tangent_angle(self):
+        """Return the end direction of this arc segment in radians.
+        This is the angle of a tangent vector at the arc segment's
+        end point."""
+        v = self.center - self.p2 if self.is_clockwise() else self.p2 - self.center
+        return v.angle() + math.pi/2
+        
+    def transform(self, matrix):
+        """Return a copy of this arc with the transform matrix applied to it."""
+        p1 = self[0].transform(matrix)
+        p2 = self[1].transform(matrix)
+        radius = self.radius
+        angle = self.angle
+        scale_x = matrix[0][0]
+        scale_y = matrix[1][1]
+        if scale_x * scale_y < 0:
+            angle = -angle
+        radius *= scale_x
+        # Center will be recomputed...
+        return Arc(p1, p2, radius, angle)
+
     def distance_to_point(self, p, inside_only=True):
         """Return the Hausdorff distance from this arc segment
         to the specified point.
@@ -761,31 +1182,43 @@ class Arc(Shape):
         t = v3.cross(v2) / det
         is_inside_arc = (s >= 0.0 and t >= 0.0)
         if is_inside_arc:
-            #Line(self.center, p).SVG_plot('#00cccc')
+            #Line(self.center, p).svg_plot('#00cccc')
             # Distance from arc center to point.
             dp = self.center.distance(p)
             # Distance from point to edge of arc.
             d = abs(dp - self.radius)
-#            Line(p, (p - self.center) * (d / dp) + p).SVG_plot('#0000cc')
+#            Line(p, (p - self.center) * (d / dp) + p).svg_plot('#0000cc')
         elif inside_only:
             return -1
         else:
-#            Line(self.center, p).SVG_plot('#c0cc00')
+#            Line(self.center, p).svg_plot('#c0cc00')
             # Otherwise distance to closest arc segment endpoint.
             d = min(self.p1.distance(p), self.p2.distance(p))
         return d
     
-    def point_at(self, angle):
+    
+    def point_at(self, u):
+        """Return the point at unit distance :u: along this arc
+        from the start point.
+        """
+        return self.point_at_angle(abs(self.angle) * u)
+        
+    def subdivide(self, u):
+        """Subdivide this arc at unit distance :u: from the start point.
+        Returns a tuple containing two Arcs.
+        """
+        assert(0.0 < u and u < 1.0)
+        return self.subdivide_at_angle(abs(self.angle) * u)
+        
+    def point_at_angle(self, angle):
         """Return the point on this arc given the specified angle from
         the start point of the arc segment."""
-        if angle < EPSILON or angle > abs(self.angle):
-            return None
-        # TODO: there is surely a faster way to do this....
-        v1 = self.p1 - self.center
-        v2 = self.p2 - self.center
-        a1 = math.fmod(math.atan2(v1.y, v1.x) + math.pi, 2 * math.pi)
-        a2 = math.fmod(math.atan2(v2.y, v2.x) + math.pi, 2 * math.pi)
-        if a1 > a2:
+        if angle < EPSILON:
+            return self.p1
+        if angle >= abs(self.angle):
+            return self.p2
+        a1 = (self.p1 - self.center).angle()
+        if self.angle < 0:
             angle = a1 - angle
         else:
             angle = a1 + angle
@@ -793,7 +1226,7 @@ class Arc(Shape):
         y = self.center.y + self.radius * math.sin(angle)
         return P(x, y)
             
-    def subdivide(self, angle):
+    def subdivide_at_angle(self, angle):
         """Split this arc into two arcs at the point on this arc given
         by the specified positive arc angle (0-2pi) from the start point.
         Returns a tuple containing one or two Arc objects.
@@ -801,7 +1234,7 @@ class Arc(Shape):
         if angle < EPSILON:
             return (self,)
         angle2 = abs(self.angle) - angle
-        p = self.point_at(angle)
+        p = self.point_at_angle(angle)
         if self.angle < 0:
             angle = -angle
             angle2 = -angle2
@@ -809,7 +1242,17 @@ class Arc(Shape):
         arc2 = Arc(p, self.p2, self.radius, angle2, self.center)
         return (arc1, arc2)
 
-    def to_SVG_path(self):
+    def reversed(self):
+        """Return an Arc with direction reversed."""
+        return Arc(self.p2, self.p1, self.radius, -self.angle, self.center)
+    
+    def to_svg_simplepath(self):
+        """Return the SVG simplepath segment for this shape."""
+        sweep_flag = 0 if self.angle < 0 else 1
+        return ('A', (self.radius, self.radius, 0.0, 0,
+                      sweep_flag, self.p2.x, self.p2.y))
+                
+    def to_svg_path(self):
         """Return a string with the SVG path 'd' attribute
         that corresponds to this arc.
         """
@@ -818,24 +1261,24 @@ class Arc(Shape):
                 (self.p1.x, self.p1.y, self.radius,
                  self.radius, sweep_flag, self.p2.x, self.p2.y)
 
-    def SVG_plot(self, color='#cccc99'):
+    def svg_plot(self, color='#cccc99'):
         """Draw an SVG arc for debugging/testing"""
-        if DEBUG_EFFECT is not None and DEBUG_LAYER is not None:
+        if SVG_CONTEXT is not None:
             style = 'fill:none;stroke:%s;stroke-width:0.25pt;stroke-opacity:1' % (color,)
-            attrs = {'d': self.to_SVG_path(), 'style': style}
-            DEBUG_EFFECT.create_path(attrs, layer=DEBUG_LAYER)
+            attrs = {'d': self.to_svg_path(), 'style': style}
+            SVG_CONTEXT.create_path(attrs)
             # Draw the center-arc wedge
             seg1 = Line(self.center, self.p1)
             seg2 = Line(self.center, self.p2)
-            self.center.SVG_plot(color=color)
-            seg1.SVG_plot(color=color)
-            seg2.SVG_plot(color=color)
+            self.center.svg_plot(color=color)
+            seg1.svg_plot(color=color)
+            seg2.svg_plot(color=color)
                 
 
-class Circle(Shape):
+class Circle(tuple):
     """Two dimensional immutable circle.
     """
-    def __new__(self, center, radius):
+    def __new__(cls, center, radius):
         return tuple.__new__(Circle, (P(center), radius))
     
     @staticmethod
@@ -853,6 +1296,10 @@ class Circle(Shape):
         """The radius of this circle."""
         return self[1]
 
+    def transform(self, matrix):
+        """Return a copy of this circle with the transform matrix applied to it."""
+        return Circle(self[0].transform(matrix), self[1])
+
     def point_inside(self, p):
         """Return True if the given point is inside this circle."""
         return self.center.distance2(p) < self.radius**2
@@ -864,9 +1311,10 @@ class Circle(Shape):
                 return False
         return True
 
-class CubicBezier(Shape):
+
+class CubicBezier(tuple):
     """Two dimensional immutable cubic bezier curve.
-    
+
     :param p1: start point.
     :type p1: P
     :param c1: start control point.
@@ -876,7 +1324,7 @@ class CubicBezier(Shape):
     :param p2: end point.
     :type p2: P
     """
-    def __new__(self, p1, c1, c2, p2):
+    def __new__(cls, p1, c1, c2, p2):
         return tuple.__new__(CubicBezier, (P(p1), P(c1), P(c2), P(p2)))
 
     @property
@@ -899,13 +1347,22 @@ class CubicBezier(Shape):
         """The end point of curve."""
         return self[3]
     
-    def start_tangent(self):
+    def transform(self, matrix):
+        """Return a copy of this curve with the transform matrix applied to it."""
+        return CubicBezier(self[0].transform(matrix), self[1].transform(matrix),
+                           self[2].transform(matrix), self[3].transform(matrix))
+
+    def start_tangent_angle(self):
         """Return the tangent direction of this curve in radians.
         This is usually the angle of the first control point vector."""
         return self.tangent_at(0.0).angle()
 
     def point_at(self, t):
         """A point on the curve corresponding to <t>."""
+        if float_eq(t, 0.0):
+            return self.p1
+        elif float_eq(t, 1.0):
+            return self.p2
         return (self.p1 * (1 - t)**3 +
                 self.c1 * t * 3 * (1 - t)**2 +
                 self.c2 * t**2 * 3 * (1-t) +
@@ -913,13 +1370,26 @@ class CubicBezier(Shape):
         
     def tangent_at(self, t):
         """The tangent vector at the point on the curve corresponding to <t>."""
-        return ((self.c1 - self.p1) * 3 * (1 - t)**2 +
-                (self.c2 - self.c1) * 6 * t * (1 - t) +
-                (self.p2 - self.c2) * 3 * t**2)
+        if float_eq(t, 0.0):
+            if self.c1 == self.p1:
+                v = self.c2 - self.p1
+            else:
+                v = self.c1 - self.p1
+        elif float_eq(t, 1.0):
+            if self.c2 == self.p2:
+                v = self.c2 - self.p1
+            else:
+                v = self.c2 - self.p2
+        else:
+            v = ((self.c1 - self.p1) * 3 * (1 - t)**2 +
+                    (self.c2 - self.c1) * 6 * t * (1 - t) +
+                    (self.p2 - self.c2) * 3 * t**2)
+        return v
         
     def is_straight_line(self, flatness=EPSILON):
-        """Return True if curve is essentially a straight line
-        :param flatness: The required flatness to be considered a line
+        """Return True if curve is essentially a straight line.
+        
+        :param flatness: The required flatness to be considered a line\
             (default is EPSILON)
         :type flatness: float
         """
@@ -929,32 +1399,32 @@ class CubicBezier(Shape):
         """Return the flatness of this curve.
         The maximum distance between the control points and the line segment
         defined by the start and end points of the curve.
+        This is known as convex hull flatness and is robust regarding
+        degenerate curves.
         """
         chord = Line(self.p1, self.p2)
         d1 = chord.distance_to_point(self.c1, segment=True)
         d2 = chord.distance_to_point(self.c2, segment=True)
-        flatness = max(d1, d2)
-        return flatness
+        logger.debug('flatness=max(%.4f, %.4f)' % (d1, d2))
+        return max(d1, d2)
     
     def subdivide(self, t):
         """Subdivide this curve at the point corresponding to <t>
         into two cubic bezier curves, where 0<=t<=1.
         Uses De Casteljaus's algorithm.
+        
         Returns a tuple of one or two CubicBezier objects.
         """
         if t <= EPSILON or t >= 1.0:
-            return (self,)
+            return (self, None)
         cp0, cp1, p, cp2, cp3 = self.controlpoints_at(t)
-#        p.SVG_plot('#00ffff')
         curve1 = CubicBezier(self.p1, cp0, cp1, p)
         curve2 = CubicBezier(p, cp2, cp3, self.p2)
-#        curve1.SVG_plot()
-#        curve2.SVG_plot()
         return (curve1, curve2)
     
     def subdivide_inflections(self):
         """Subdivide this curve at the inflection points, if any.
-        Returns a tuple containing one to three curves depending on whether
+        Returns a list containing one to three curves depending on whether
         there are no inflections, one inflection, or two inflections.
         """
         t1, t2 = self.find_inflections()
@@ -979,16 +1449,18 @@ class CubicBezier(Shape):
                     curves.extend(curve2.subdivide(t))
                 else:
                     curves.extend((curve1, curve2))
-            #curves[0].SVG_plot()
-            #curves[1].SVG_plot()
-            #curves[2].SVG_plot()
+            #curves[0].svg_plot()
+            #curves[1].svg_plot()
+            #curves[2].svg_plot()
             return curves
         else:
-            return (self,)
+            return [self,]
     
     def controlpoints_at(self, t):
         """Get the point on this curve corresponding to <t> plus control points.
-        Returns a tuple of the form (C0, C1, P, C2, C3).
+        Returns a tuple of the form (C0, C1, P, C2, C3) where C1 and C2 are the
+        control points tangent to P and C0 and C3 would be the new control
+        points of the endpoints where this curve to be subdivided at P.
         Relevant points found using De Casteljaus's algorithm. Useful for
         subdividing the curve at <t>.
         """
@@ -1032,11 +1504,19 @@ class CubicBezier(Shape):
         # Basically the equation to be solved is
         # P' * P'' = 0
         # Where P' and P'' are the first and second derivatives respectively
-        
+                
         # Temporary vectors to simplify the math
         v1 = self.c1 - self.p1
+#        logging.debug('v1: %f, %f' % (v1.x, v1.y))
+#        logging.debug('v2: %f, %f' % (v2.x, v2.y))
+        # First check for a degenerative case where the curve is exactly
+        # symmetrical along the axis defined by the endpoints.
+        # TODO: this is a fix for a bug but it seems a little funky
+        v2 = self.c2 - self.p2
+        if v1.x > 0.0 and v1.y > 0.0 and float_eq(v1.x, -v2.x) and float_eq(v1.y, -v2.y):
+            return (0.5, 0.0)
         v2 = self.c2 - self.c1 - v1
-        v3 = self.p2 - self.c2 - v1 - 2 * v2
+        v3 = self.p2 - self.c2 - v1 - 2*v2
         
         # Calculate quadratic coefficients
         # of the form a*x**2 + b*x + c = 0
@@ -1048,12 +1528,12 @@ class CubicBezier(Shape):
         # These will be the inflection locations if 0 >= t <= 1
         t1 = 0.0
         t2 = 0.0
-        D = b * b - 4 * a * c # the discriminant
-        aa = 2 * a
-        if abs(aa) > 0.0: # Avoid div by zero
-            d = math.sqrt(abs(D))
-            t1 = (-b - d) / aa
-            t2 = (-b + d) / aa
+        cc = 2 * c
+        if abs(cc) > 0.0: # Avoid div by zero
+            # the discriminant of the quadratic eq.
+            d = math.sqrt(abs(b*b - 4*a*c))
+            t1 = (-b - d) / cc
+            t2 = (-b + d) / cc
     
             if t1 < EPSILON or t1 >= (1.0 - EPSILON):
                 t1 = 0.0
@@ -1069,29 +1549,40 @@ class CubicBezier(Shape):
         # The center <s> of the circle is the intersection of the bisectors
         # of line segments P1->P2 and (P1+unit(C1))->(P2+unit(C2))
         chord = Line(self.p1, self.p2)
+#        chord.svg_plot()
         u1 = (self.c1 - self.p1).unit()
         u2 = (self.c2 - self.p2).unit()
         useg = Line(self.p1 + u1, self.p2 + P(-u2.x, -u2.y))
+#        useg.svg_plot()
         center = chord.bisector().intersection(useg.bisector())
         radius = center.distance(self.p1)
         angle = center.angle2(self.p1, self.p2)
         return Arc(self.p1, self.p2, radius, angle, center)
     
-    def biarc_approximation(self, tolerance=0.01, max_depth=4, line_flatness=0.01, _recurs_depth=0):
+    def biarc_approximation(self, tolerance=0.01, max_depth=4,
+                            line_flatness=0.01, _recurs_depth=0):
         """Approximate this curve using biarcs.
+        
         This will recursively subdivide the curve into a series of
-        G1 connected arcs or lines until the Hausdorff distance between the
+        G1 (tangential continuity) connected arcs or lines until the Hausdorff distance between the
         approximation and this bezier curve is within the specified tolerance.
-        Returns a list of Arc and/or Line objects.
+        
+        :param tolerance: approximation tolerance. A lower value increases
+            accuracy at the cost of time and number of generated biarc segments.
+        :param max_depth: maximum recursion depth. This limits how many times
+            the Bezier curve can be subdivided.
+        :param line_flatness: segments flatter than this value will be converted
+            to straight line segments instead of arcs with huge radii.
+        :return: a list of Arc and/or Line objects.
         """
-#        self.SVG_plot() #DEBUG
+#        self.svg_plot(color='#ff0000') #DEBUG
         # Check for degenerate cases:
         # Bail if the curve endpoints are coincident.
         if self.p1.almost_equal(self.p2):
-            return ()                
+            return []                
         # Or if the curve is basically a straight line then return a Line.
-        if self.flatness() < line_flatness:
-            return (Line(self.p1, self.p2),)
+        if self.is_straight_line():
+            return [Line(self.p1, self.p2),]
         
         if _recurs_depth == 0:
             # Subdivide this curve at any inflection points to make sure
@@ -1101,16 +1592,20 @@ class CubicBezier(Shape):
             if len(curves) > 1:
                 biarcs = []        
                 for curve in curves:
-                    biarcs.extend(curve.biarc_approximation(tolerance=tolerance, max_depth=max_depth, line_flatness=line_flatness, _recurs_depth=_recurs_depth+1))
+                    sub_biarcs = curve.biarc_approximation(
+                                    tolerance=tolerance, max_depth=max_depth,
+                                    line_flatness=line_flatness,
+                                    _recurs_depth=_recurs_depth+1)
+                    biarcs.extend(sub_biarcs)
                 return biarcs
 
         # Calculate the arc that intersects the two endpoints of this curve
         # and the set of possible biarc joints.
         j_arc = self.biarc_joint_arc()
-#        j_arc.SVG_plot(color='#c00000') #DEBUG
+#        j_arc.svg_plot(color='#c00000') #DEBUG
         # Another degenerate case
         if j_arc.radius < EPSILON:
-            return ()
+            return []
         
         # TODO: Use a better method of finding J.
         # A possibly more accurate method (see A. Riskus, 2006)
@@ -1124,17 +1619,19 @@ class CubicBezier(Shape):
         p = self.point_at(0.5)
         v = p - j_arc.center
         pjoint = v * (j_arc.radius / v.length()) + j_arc.center
-#        pjoint.SVG_plot(color='#ffff00') #DEBUG
+#        pjoint.svg_plot(color='#ffff00') #DEBUG
                 
         # Create the two arcs that define the biarc. These will be None
         # if the control points are degenerate (ie collinear).
         arc1 = Arc.from_two_points_and_tangent(self.p1, self.c1, pjoint)
-        arc2 = Arc.from_two_points_and_tangent(self.p2, self.c2, pjoint, reverse=True)
-        if arc1 is None or arc2 is None:
-            # In case of degenerate control points just create line segements.
-            # In general this should be caught by the test for curve flatness.
-            return (arc1 if arc1 is not None else Line(self.p1, pjoint),
-                    arc2 if arc2 is not None else Line(pjoint, self.p2))
+        if arc1 is None:
+            arc1 = Line(self.p1, pjoint)
+#        arc1.svg_plot(color='#00c000') #DEBUG
+        arc2 = Arc.from_two_points_and_tangent(self.p2, self.c2, pjoint,
+                                               reverse=True)
+        if arc2 is None:
+            arc2 = Line(pjoint, self.p2)
+#        arc2.svg_plot(color='#00c000') #DEBUG
         
         if _recurs_depth < max_depth:
             # Calculate Hausdorff distances from arcs to this curve
@@ -1145,12 +1642,10 @@ class CubicBezier(Shape):
             if d1 > tolerance or d2 > tolerance:
                 curve1, curve2 = self.subdivide(0.5)
                 biarcs = []
-                biarcs.extend(curve1.biarc_approximation(tolerance, max_depth=max_depth, line_flatness=line_flatness, _recurs_depth=_recurs_depth+1))
-                biarcs.extend(curve2.biarc_approximation(tolerance, max_depth=max_depth, line_flatness=line_flatness, _recurs_depth=_recurs_depth+1))
+                biarcs.extend(curve1.biarc_approximation(tolerance=tolerance, max_depth=max_depth, line_flatness=line_flatness, _recurs_depth=_recurs_depth+1))
+                biarcs.extend(curve2.biarc_approximation(tolerance=tolerance, max_depth=max_depth, line_flatness=line_flatness, _recurs_depth=_recurs_depth+1))
                 return biarcs
-#        arc1.SVG_plot(color='#00c000') #DEBUG
-#        arc2.SVG_plot(color='#00c000') #DEBUG
-        return (arc1, arc2)
+        return [arc1, arc2]
 
     def distance_to_arc(self, arc, ndiv=9):
         """Calculate an approximate Hausdorff distance between this curve and
@@ -1163,25 +1658,34 @@ class CubicBezier(Shape):
         for i in range(ndiv+1):
             t = float(i) / ndiv
             p = self.point_at(t)
-#            p.SVG_plot('#00cccc') #DEBUG
+#            p.svg_plot('#00cccc') #DEBUG
             d = arc.distance_to_point(p)
             if d > 0.0: # only if arc intersects segment(center,p)
                 dmax = max(dmax, d)
         return dmax
 
+    def reversed(self):
+        """Return a CubicBezier with control points (direction) reversed."""
+        return CubicBezier(self.p2, self.c2, self.p1, self.c1)
+        
     def __str__(self):
         """Concise string representation."""
-        return "CubicBezier((%.4f, %.4f), (%.4f, %.4f), (%.4f, %.4f), (%.4f, %.4f))" % \
+        return 'CubicBezier((%.4f, %.4f), (%.4f, %.4f), (%.4f, %.4f), (%.4f, %.4f))' % \
                 (self.p1.x, self.p1.y, self.c1.x, self.c1.y,
                  self.c2.x, self.c2.y, self.p2.x, self.p2.y)
 
     def __repr__(self):
         """Precise string representation."""
-        return "CubicBezier((%r, %r), (%r, %r), (%r, %r), (%r, %r))" % \
+        return 'CubicBezier((%r, %r), (%r, %r), (%r, %r), (%r, %r))' % \
                 (self.p1.x, self.p1.y, self.c1.x, self.c1.y,
                  self.c2.x, self.c2.y, self.p2.x, self.p2.y)
 
-    def to_SVG_path(self):
+    def to_svg_simplepath(self):
+        """Return the SVG simplepath segment for this shape."""
+        return ('C', (self.c1.x, self.c1.y, self.c2.x, self.c2.y,
+                      self.p2.x, self.p2.y))
+                
+    def to_svg_path(self):
         """Return a string with the SVG path 'd' attribute
         that corresponds with this curve.
         """
@@ -1189,30 +1693,34 @@ class CubicBezier(Shape):
                 (self.p1.x, self.p1.y, self.c1.x, self.c1.y,
                  self.c2.x, self.c2.y, self.p2.x, self.p2.y)
 
-    def SVG_plot(self, color='#cccc99'):
+    def svg_plot(self, color='#cccc99'):
         """Draw an SVG version of this curve for debugging/testing.
         Include control points, inflection points, and tangent lines.
         """
-        if DEBUG_EFFECT is not None and DEBUG_LAYER is not None:
+        if SVG_CONTEXT is not None:
             style = 'fill:none;stroke:%s;stroke-width:0.25pt;stroke-opacity:1' % (color,)
-            attrs = {'d': self.to_SVG_path(), 'style': style}
-            DEBUG_EFFECT.create_path(attrs, layer=DEBUG_LAYER)
+            attrs = {'d': self.to_svg_path(), 'style': style}
+            SVG_CONTEXT.create_path(attrs)
             # Draw control points and tangents
-            self.c1.SVG_plot(color='#0000c0')
-            self.c2.SVG_plot(color='#0000c0')
+            self.c1.svg_plot(color='#0000c0')
+            self.c2.svg_plot(color='#0000c0')
             tseg1 = Line(self.p1, self.c1)
-            tseg1.SVG_plot()
+            tseg1.svg_plot()
             tseg2 = Line(self.p2, self.c2)
-            tseg2.SVG_plot()
+            tseg2.svg_plot()
             # Draw inflection points if any
             t1, t2 = self.find_inflections()
+            logging.debug('t1= %f, t2= %f' % (t1, t2))
             if t1 > 0.0:
+                #ip1 = self.controlpoints_at(t1)[2]
                 ip1 = self.point_at(t1)
-                ip1.SVG_plot(color='#c00000')
+                logging.debug('ip1= %f, %f' % (ip1.x, ip1.y))
+                ip1.svg_plot(color='#c00000')
             if t2 > 0.0:
+                #ip2 = self.controlpoints_at(t2)[2]
                 ip2 = self.point_at(t2)
-                ip2.SVG_plot(color='#c00000')
+                ip2.svg_plot(color='#c00000')
             # Draw midpoint
             mp = self.point_at(0.5)
-            mp.SVG_plot(color='#666666')
+            mp.svg_plot(color='#00ff00')
 

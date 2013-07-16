@@ -1,26 +1,23 @@
-#-----------------------------------------------------------------------------#
-#    Copyright (C) 2012,2013 Claude Zervas
-#    email: claude@utlco.com
-#    
-#    This program is free software; you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation; either version 2 of the License, or
-#    (at your option) any later version.
-#    
-#    This program is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU General Public License for more details.
-#    
-#    You should have received a copy of the GNU General Public License
-#    along with this program; if not, write to the Free Software
-#    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
-#-----------------------------------------------------------------------------#
+'''An Inkscape extension to create Penrose tiles.
+Based on code by Eric R. Weeks
+See http://www.physics.emory.edu/~weeks/software/quasic.html
 
-"""An Inkscape extension to create Penrose tilings.
+Copyright (C) 2012 Claude Zervas, claude@utlco.com
 
-====
-"""
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+'''
 import os
 import sys
 import logging
@@ -32,7 +29,7 @@ import inkex
 import simplestyle
 
 from lib import geom
-from lib import supereffect
+from lib import svg
 from lib import quasi
 from lib import polygon
 from lib import voronoi
@@ -43,12 +40,12 @@ DEFAULT_LOG_LEVEL = logging.DEBUG
 logger = logging.getLogger(__name__)
 
 class IdentityProjector(object):
-    """Identity projection. No distortion."""
+    '''Identity projection. No distortion.'''
     def project(self, p):
         return p
     
 class SphericalProjector(IdentityProjector):
-    """Project a point on to a sphere."""
+    '''Project a point on to a sphere.'''
     def __init__(self, center, radius, invert=False):
         self.center = center
         self.radius = radius
@@ -65,41 +62,31 @@ class SphericalProjector(IdentityProjector):
         return (v * scale) + self.center
 
 
-class Quasink(supereffect.SuperEffect):
-    """Inkscape plugin that creates quasi-crystal-like patterns.
+class Quasink(svg.SuperEffect):
+    '''Inkscape plugin that creates quasi-crystal-like patterns.
     Based on quasi.c by Eric Weeks.
-    """
+    '''
     styles = {
-        'polygon':
-            'fill:none;stroke:#333333;stroke-width:0.5pt;',
-        'polyseg':
-            'fill:none;stroke-opacity:0.8;stroke-width:%s;stroke:%s;',
-        'polysegpath':
-            'fill:none;stroke-opacity:0.8;stroke-linejoin:round;'
-            'stroke-width:%s;stroke:%s;',
-        'segment':
-            'fill:none;stroke-opacity:0.8;stroke-width:%s;stroke:%s;',
-        'segpath':
-            'fill:none;stroke-opacity:0.8;stroke-linejoin:round;'
-            'stroke-width:%s;stroke:%s;',
-        'voronoi':
-            'fill:none;stroke-opacity:0.8;stroke-width:%s;stroke:%s;',
-    }
+              'polygon': 'fill:none;stroke:#333333;stroke-width:0.5pt;',
+              'polyseg': 'fill:none;stroke-opacity:0.8;stroke-width:%s;stroke:%s;',
+              'polysegpath': 'fill:none;stroke-opacity:0.8;stroke-linejoin:round;stroke-width:%s;stroke:%s;',
+              'segment': 'fill:none;stroke-opacity:0.8;stroke-width:%s;stroke:%s;',
+              'segpath': 'fill:none;stroke-opacity:0.8;stroke-linejoin:round;stroke-width:%s;stroke:%s;',
+              'voronoi': 'fill:none;stroke-opacity:0.8;stroke-width:%s;stroke:%s;',
+             }
     
     # Scale multiplier. This should be about right to get the whole
     # thing on a A4 size sheet of paper.
-    _SCALE_SCALE = 8.0
+    SCALE_SCALE = 8.0
     
-    projector = None
+    projector = IdentityProjector()
         
     def effect(self):
-        """Main entry point for Inkscape plugins.
-        """
+        '''Main entry point for Inkscape plugins.
+        '''
         if self.options.log_create_log and self.options.log_filename:
-            log_path = os.path.expanduser(self.options.log_filename)
-            log_path = os.path.abspath(log_path)
-            log_level = getattr(logging, self.options.log_level,
-                                DEFAULT_LOG_LEVEL)
+            log_path = os.path.abspath(os.path.expanduser(self.options.log_filename))
+            log_level = getattr(logging, self.options.log_level, DEFAULT_LOG_LEVEL)
             logging.basicConfig(filename=log_path, filemode='w', level=log_level)
             
 #        logger.debug('scale: %f' % self.options.scale)
@@ -119,64 +106,59 @@ class Quasink(supereffect.SuperEffect):
         self.convert_option_units(default_unit_scale=unit_scale)
         
         geom.set_epsilon(self.options.epsilon)
-#        logger.debug('EPSILON= %f' % geom.EPSILON)
+        
+        logger.debug('EPSILON= %f' % geom.EPSILON)
 
-        self.scale = self.options.scale * self._SCALE_SCALE
+        self.scale = self.options.scale * self.SCALE_SCALE
         self.offset = geom.P(self.view_center) + geom.P(self.options.offset_x,
-                                                        self.options.offset_y)
-        mrot = geom.matrix_rotate_2d(self.options.rotate)
-        self.transform = geom.matrix_scale_translate_2d(self.scale, self.scale,
-                                                self.offset.x, self.offset.y)
-        self.transform = geom.compose_transform(self.transform, mrot)       
-        doc_size = geom.P(self.get_document_size())
-        self.doc_center = doc_size / 2
+                                              self.options.offset_y)
+        
+        doc_width, doc_height = self.get_document_size()
+        self.doc_center = geom.P(doc_width / 2, doc_height / 2)
                 
         plotter = SVGQuasiPlotter()
-#        if DEFAULT_LOG_LEVEL == logging.DEBUG:
-#            geom.DEBUG_EFFECT = self
-#            geom.DEBUG_LAYER = self.create_layer('debug')
-#            plotter.debug_layer = geom.DEBUG_LAYER
+        geom.DEBUG_EFFECT = self
+        geom.DEBUG_LAYER = self.create_layer('debug')
+        plotter.debug_layer = geom.DEBUG_LAYER
         
-        # Set up document and margin clipping regions
-        mBL = geom.P(self.options.margin_left, self.options.margin_bottom)
-        mTR = doc_size - geom.P(self.options.margin_right,
-                                self.options.margin_top)
-        margin_clip_rect = geom.Box(mBL, mTR)
-        if self.options.clip_to_circle:
-            r = min(doc_size.x, doc_size.y) / 2.0
-            plotter.doc_clip_region = geom.Circle(self.doc_center, r)
-            r = min(margin_clip_rect.width(), margin_clip_rect.height()) / 2.0
-            plotter.margin_clip_region = geom.Circle(self.doc_center, r)
-        else:
-            if self.options.clip_to_doc:
-                plotter.doc_clip_region = geom.Box(geom.P(0,0), doc_size)
-            if self.options.clip_to_margins:
-                plotter.margin_clip_region = margin_clip_rect
-            
         plotter.doc_center = self.doc_center
         plotter.blowup_scale = self.options.blowup_scale
-#        plotter.clip_to_doc = self.options.clip_to_doc
-#        plotter.clip_polygons_to_margins = self.options.clip_poly
-#        plotter.clip_segments_to_margins = self.options.clip_segments
+        plotter.do_polygons = self.options.polygon_draw
+        plotter.do_segments = self.options.segment_draw
+        plotter.clip_to_doc = self.options.clip_to_doc
+        plotter.clip_polygons_to_margins = self.options.clip_poly
+        plotter.clip_segments_to_margins = self.options.clip_segments
+        doc_top_right = geom.P(doc_width, doc_height)
+        margin_bottom_left = geom.P(self.options.margin_left,
+                               self.options.margin_bottom)
+        margin_top_right = doc_top_right - geom.P(self.options.margin_right,
+                                             self.options.margin_top)
+        margin_clip_rect = geom.Box(margin_bottom_left, margin_top_right)
+        if self.options.clip_to_circle:
+            plotter.doc_clip_region = geom.Circle(self.doc_center,
+                                                  min(doc_width, doc_height) / 2.0)
+            plotter.margin_clip_region = geom.Circle(self.doc_center,
+                                                     min(margin_clip_rect.width(),
+                                                         margin_clip_rect.height()) / 2.0)
+        else:
+            plotter.doc_clip_region = geom.Box(geom.P(0,0), doc_top_right)
+            plotter.margin_clip_region = margin_clip_rect
             
         if self.options.project_sphere:
             self.projector = SphericalProjector(self.doc_center,
                                                 self.options.project_radius,
                                                 invert=self.options.project_invert)
-        if self.projector is None:
-            self.projector = IdentityProjector()
-        plotter.projector = self.projector
+            plotter.projector = self.projector
+        
         if self.options.polygon_mult == 1:
             plotter.polygon_layers.append(self.create_layer('quasink polygons'))
         else:
             for n in range(self.options.polygon_mult):
-                layer = self.create_layer('quasink polygons %02d' % (n+1))
-                plotter.polygon_layers.append(layer)
+                plotter.polygon_layers.append(self.create_layer('quasink polygons %02d' % (n+1)))
         if self.options.segment_draw:
             plotter.segment_layer = self.create_layer('quasink segments')
         plotter.scale = self.scale
         plotter.offset = self.offset
-        plotter.transform = self.transform
 #        plotter.offsetx = self.offset[0]
 #        plotter.offsety = self.offset[1]
         plotter.fill_polygons = bool(self.options.polygon_fill)
@@ -208,20 +190,18 @@ class Quasink(supereffect.SuperEffect):
                     
         if self.options.polyseg_draw:
             polyseg_layer = self.create_layer('quasink_polygon_segments')
-            color = self.parse_color(self.options.polyseg_stroke)
             style = self.styles['polyseg'] % (self.options.polyseg_stroke_width,
-                                              color,)
+                                              self.parse_color(self.options.polyseg_stroke),)
             for segment in plotter.poly_segments:
                 self.draw_segment(segment, polyseg_layer, style)
                 
         if self.options.polysegpath_draw:
             polysegpath_layer = self.create_layer('quasink_polygon_segment_paths')
             segtable = SegmentChainer2()
-#            seglist = sorted(plotter.poly_segments, key=segsort_key)
-            segpath_list = segtable.create_chains(plotter.poly_segments)
+            seglist = sorted(plotter.poly_segments, key=segsort_key)
+            segpath_list = segtable.create_chains(seglist)
             # Sort segment paths so that the largest are at the bottom of the Z-order
 #            segpath_list.sort(key=SegmentPath.bounding_box_area, reverse=True)
-            segpath_list.sort(key=len, reverse=True)
             style = self.styles['polysegpath'] % (self.options.polysegpath_stroke_width,
                                                   self.parse_color(self.options.polysegpath_stroke),)
             for segpath in segpath_list:
@@ -239,8 +219,7 @@ class Quasink(supereffect.SuperEffect):
             plotter.plot_polygon(hull, nofill=True, draw_only=True)
         
         if self.options.hull_draw or self.options.voronoi_draw:
-            polygon_hulls = plotter.poly_segments.boundary_polygons(
-                                peel_hulls=self.options.hull_inner_draw)
+            polygon_hulls = plotter.poly_segments.boundary_polygons(peel_hulls=self.options.hull_inner_draw)
 
         if self.options.hull_draw:
             hull_layer = self.create_layer('quasink_polygon_hulls')
@@ -261,7 +240,7 @@ class Quasink(supereffect.SuperEffect):
                 
         if self.options.voronoi_draw:
             voronoi_layer = self.create_layer('quasink_voronoi')
-#            voronoi_path_layer = self.create_layer('quasink_voronoi_paths')
+            voronoi_path_layer = self.create_layer('quasink_voronoi_paths')
             style = self.styles['voronoi'] % (self.options.voronoi_stroke_width,
                                               self.parse_color(self.options.voronoi_stroke),)
 #            points = []
@@ -277,25 +256,19 @@ class Quasink(supereffect.SuperEffect):
                 p1 = self.projector.project(segment.p1 * self.scale + self.offset)
                 p2 = self.projector.project(segment.p2 * self.scale + self.offset)
                 line = geom.Line(p1, p2)
-                line = margin_clip_rect.clip_line(line)
-                if line and polygon.point_inside(phull, line.p1) and \
+#                line = margin_clip_rect.clip_line(line)
+#                if line:
+                if margin_clip_rect.line_inside(line) and \
+                polygon.point_inside(phull, line.p1) and \
                 polygon.point_inside(phull, line.p2):
                     attrs = {'d': 'M %5f %5f L %5f %5f' % \
                              (line.p1.x, line.p1.y, line.p2.x, line.p2.y),
                              'style': style}
                     inkex.etree.SubElement(voronoi_layer, inkex.addNS('path', 'svg'), attrs)
-                    
-    def draw_convex_hull(self, plotter):
-        hull_layer = self.create_layer('quasink_convex_hull')
-        plotter.polygon_layers[0] = hull_layer
-        
-        hull = plotter.poly_segments.convex_hull()
-        plotter.polygon_stroke = "#f08080"
-        plotter.plot_polygon(hull, nofill=True, draw_only=True)
                 
                         
     def parse_color(self, color_text):
-        """Parse the color text input from the extension dialog."""
+        '''Parse the color text input from the extension dialog.'''
         try:
             if color_text and color_text.lower() != 'none':
                 return simplestyle.formatColoria(simplestyle.parseColor(color_text))
@@ -315,7 +288,6 @@ class Quasink(supereffect.SuperEffect):
         Returns a list of segments.
         """
         [vertices, unused, edges, unused] = voronoi.voronoi_diagram(points)
-#        [vertices, unused, edges] = voronoi_inkscape.computeVoronoiDiagram(points)
         voronoi_segments = []
         for edge in edges:
             if edge[1] >= 0 and edge[2] >= 0:
@@ -326,21 +298,18 @@ class Quasink(supereffect.SuperEffect):
         return voronoi_segments
 
 class SegmentPath(object):
-    """"""
+    ''''''
     def __init__(self, segments):
         super(SegmentPath, self).__init__()
         self.segment_list = segments
-        
-    def len(self):
-        return len(self.segment_list)
     
     def bounding_box_area(self):
-        """Return the area of the bounding box"""
+        '''Return the area of the bounding box'''
         bbox = self.bounding_box()
         return bbox.width() * bbox.height()
         
     def bounding_box(self):
-        """Return the bounding rectangle aligned to the XY axes."""
+        '''Return the bounding rectangle aligned to the XY axes.'''
         if getattr(self, 'bbox', None) is None:
             min_x = sys.float_info.max
             max_x = 0.0
@@ -358,9 +327,9 @@ class SegmentPath(object):
 class SegmentSet(set):
     """A set of line segments.
     """
-#    def __init__(self):
-#        super(SegmentSet, self).__init__()
-#        self.insertion_order = []
+    def __init__(self):
+        super(SegmentSet, self).__init__()
+        self.insertion_order = []
         
     def add(self, segment):
         if segment not in self:
@@ -380,7 +349,7 @@ class SegmentSet(set):
     def _added_unique(self, segment):
         """This is called when a new unique segment is added to this set.
         """
-#        self.insertion_order.append(segment)
+        self.insertion_order.append(segment)
                 
 class SegmentGraph(SegmentSet):
     """A segment graph.
@@ -441,8 +410,7 @@ class SegmentGraph(SegmentSet):
         return self._calc_boundary_polygon(self.p_min_y, self.nodes)
         
     def boundary_polygons(self, peel_hulls=True):
-        """Similar to convex hull peeling except using possibly
-        non-convex boundary polygons."""
+        """Similar to convex hull peeling except using boundary polygons."""
         nodes = dict(self.nodes)
         poly_list = []
         p_min_y = self.p_min_y
@@ -515,8 +483,6 @@ class SegmentGraph(SegmentSet):
                          
 class SegmentChain(list):
     """A connected chain of line segments."""
-    min_corner_angle = math.pi * .3
-    
 #    def reverse(self):
 #        super(SegmentChain, self).reverse()
 #        # Reverse every segment in the list
@@ -534,42 +500,20 @@ class SegmentChain(list):
     def add_segment(self, segment):
         """Try to add the segment to the chain. Return True if successful other False."""
         if len(self) == 0 or segment.p1 == self.endp:
-            return self._append_segment(segment)
-#            self.append(segment)
+            self.append(segment)
         elif segment.p2 == self.endp:
-            return self._append_segment(segment.reversed())
-#            self.append(segment.reversed())
+            self.append(segment.reversed())
         elif segment.p2 == self.startp:
-            return self._prepend_segment(segment)
-#            self.insert(0, segment)
+            self.insert(0, segment)
         elif segment.p1 == self.startp:
-            return self._prepend_segment(segment.reversed())
-#            self.insert(0, segment.reversed())
+            self.insert(0, segment.reversed())
         else:
             return False
-#        return True
-    
-    def _prepend_segment(self, segment):
-        if len(self) == 0 or self._angle_is_ok(segment, self[0]):
-            self.insert(0, segment)
-            return True
-        return False
-    
-    def _append_segment(self, segment):
-        if len(self) == 0 or self._angle_is_ok(self[-1], segment):
-            self.append(segment)
-            return True
-        return False
-    
-    def _angle_is_ok(self, seg1, seg2):
-        if isinstance(seg1, geom.Line) and isinstance(seg2, geom.Line):
-            a = abs(seg1.p2.angle2(seg1.p1, seg2.p2))
-            return a > self.min_corner_angle
         return True
     
 
 class SegmentChainer2(object):
-    """A list of line segments chains."""    
+    '''A list of line segments chains.'''    
     def __init__(self):
         self.chain_list = []
         
@@ -587,100 +531,25 @@ class SegmentChainer2(object):
             self.chain_list.append(chain)
         return self.chain_list
     
-
-class Document(object):
-    def __init__(self, transform=geom.IdentityTransform2D, clip_region=None,
-                 projector=IdentityProjector()):
-        self.polygons = []
-        self.segments = []
-        self.transform = transform
-        self.clip_region = clip_region
-        self.projector = projector
-        self._style = None
-        self._style_changed = True
-        
+    
+class BufQuasiPlotter(quasi.QuasiPlotter):
+    '''A plotter that just accumulates the quasi geometry.'''
+    polygons = []
+    mid_segments = []
+    mid_segment_set = SegmentSet()
+    poly_segment_set = SegmentGraph()
+    
     def plot_polygon(self, vertices):
-        xvertices = self.transform_points(vertices)
-        clipped = self._is_clipped(xvertices)
-        if not clipped:
-            self.polygons.append(xvertices)
-        return clipped
+        self.polygons.append(vertices)
 
     def plot_segment(self, x1, y1, x2, y2):
-        endpoints = geom.Line(self.transform_point(geom.P(x1, y1)), 
-                              self.transform_point(geom.P(x2, y2)))
-        self.segments.append(endpoints)
-    
-    def transform_points(self, points):
-        return map(lambda p: self.transform_point(p), points)
-    
-    def transform_point(self, p):
-        return self.projector.project(p.transform(self.transform))
-                    
-    def _is_clipped(self, points):
-        return self.clip_region is not None and \
-            not self.clip_region.all_points_inside(points)    
-    
-        
-class SimpleQuasiPlotter(quasi.QuasiPlotter):
-    """Just accumulates the original quasi geometry with no clipping.
-    """
-    def __init__(self):
-        self.polygons = []
-        self.segments = []
-        
-    def plot_polygon(self, vertices):
-        self.polygons.append(map(geom.P, vertices))
-        return False
+        self.mid_segments.append(geom.Line(geom.P(x1, y1), geom.P(x2, y2)))
 
-    def plot_segment(self, x1, y1, x2, y2):
-        self.segments.append(geom.Line(geom.P(x1, y1), geom.P(x2, y2)))
-    
-
-class SVGPlotter(object):
-    """Plot segments and polygons.
-    """
-    STYLE = {'fill': 'none',
-             'stroke-opacity': '0.8',
-             'stroke-linejoin': 'round',
-             'stroke-width': '1pt',
-             'stroke': '#000000'}
-    
-    layer = None
-
-    @property
-    def stroke_width(self):
-        return self.STYLE['stroke-width']
-    
-    @property
-    def stroke_color(self):
-        return self.STYLE['stroke']
-    
-    @property
-    def stroke_opacity(self):
-        return self.STYLE['stroke-opacity']
-    
-    @property
-    def stroke_linejoin(self):
-        return self.STYLE['stroke-linejoin']
-    
-    def __init__(self, effect):
-        self.effect = effect
-        
-    def draw_segment(self, p1, p2):
-        self.effect.create_line(p1.x, p1.y, p2.x, p2.y, self._get_style(), self.layer)
-        
-    def draw_polygon(self, vertices):
-        self.effect.create_polygon(vertices, self._get_style(), self.layer)
-        
-    def _get_style(self):
-        return simplestyle.formatStyle(self.STYLE)
 
 class SVGQuasiPlotter(quasi.QuasiPlotter):
-    """SVG output for quasi"""
+    '''SVG output for quasi'''
     scale = 1.0
     offset = geom.P(0, 0)
-    transform = geom.IdentityTransform2D
     blowup_scale = 1.0
     doc_center = geom.P(0, 0)
     debug_layer = None
@@ -689,9 +558,11 @@ class SVGQuasiPlotter(quasi.QuasiPlotter):
     polyseg_layer = None
     doc_clip_region = None
     margin_clip_region = None
-#    clip_polygons_to_margins = False
-#    clip_segments_to_margins = False
-#    clip_to_doc = True
+    clip_polygons_to_margins = False
+    clip_segments_to_margins = False
+    clip_polygons_to_doc = True
+    clip_to_doc = True
+    clip_to_circle = False
     fill_polygons = False
     polygon_stroke = '#333333'
     segment_stroke = '#666666'
@@ -703,7 +574,7 @@ class SVGQuasiPlotter(quasi.QuasiPlotter):
     
     polygon_mult = 1
     polygon_mult_spacing = 0.0
-
+    
     def plot_segpath(self, layer, segpath, style=None):
         p = self.projector.project(self._transform_point(segpath[0].p1))
         d = 'M %f %f L' % (p.x, p.y)
@@ -714,19 +585,17 @@ class SVGQuasiPlotter(quasi.QuasiPlotter):
         inkex.etree.SubElement(layer, inkex.addNS('path', 'svg'), attrs)
     
     def plot_polygon(self, vertices, nofill=False, draw_only=False):
-        """Polygons are always four sided..."""
-        if not self.polygon_layers:
-            return
+        '''Polygons are always four sided...'''
         # Test for degenerate rhombus
         if vertices[0] == vertices[2] or vertices[1] == vertices[3]:
             return True
         xvertices = [self._transform_point(geom.P(p)) for p in vertices]
-        polygon_clipped = self._is_clipped(xvertices)
+        polygon_clipped = self.is_clipped(xvertices)
         if not polygon_clipped:
             xvertices = [self._transform_point(geom.P(p)) for p in vertices]
             xvertices = self._blowout_polygon(xvertices)
             xvertices = [self.projector.project(p) for p in xvertices]
-            polygon_clipped = self._is_clipped(xvertices)
+            polygon_clipped = self.is_clipped(xvertices)
             if not polygon_clipped:
                 fill = not nofill and self.fill_polygons
                 self._draw_polygon(xvertices, fill=fill)
@@ -741,12 +610,10 @@ class SVGQuasiPlotter(quasi.QuasiPlotter):
         return polygon_clipped
 
     def plot_segment(self, x1, y1, x2, y2):
-        if self.segment_layer is None:
-            return
         segment = geom.Line(geom.P(x1, y1), geom.P(x2, y2))
         p1 = self._transform_point(segment.p1)
         p2 = self._transform_point(segment.p2)
-        if not self._is_clipped((p1, p2)):
+        if not self.is_clipped((p1, p2)):
             p1 = self.projector.project(p1)
             p2 = self.projector.project(p2)
             attrs = {'d': 'M %5f %5f L %5f %5f' % (p1.x, p1.y, p2.x, p2.y)}
@@ -763,21 +630,18 @@ class SVGQuasiPlotter(quasi.QuasiPlotter):
             inkex.etree.SubElement(self.debug_layer, inkex.addNS('circle', 'svg'), attrs)
         
     def rgb2css(self, rgb):
-        """convert the rgb float tuple to a CSS compatible color string"""
+        '''convert the rgb float tuple to a CSS compatible color string'''
         return '#%02x%02x%02x' % (int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
 
-    def _is_clipped(self, points):
+    def is_clipped(self, points):
         """Return True if any of the points are clipped by the clipping region."""
-        return (self.doc_clip_region is not None and not (self.doc_clip_region.all_points_inside(points))) \
-        or (self.margin_clip_region is not None and not (self.margin_clip_region.all_points_inside(points)))
+        return (self.clip_to_doc and not (self.doc_clip_region.all_points_inside(points))) \
+        or (self.clip_segments_to_margins and not (self.margin_clip_region.all_points_inside(points)))
         
     def _transform_point(self, p):
         return (p * self.scale) + self.offset
-#        return p.transform(self.transform)
     
     def _blowout_polygon(self, vertices):
-        if geom.float_eq(self.blowup_scale, 1.0):
-            return vertices
         centroid = self._polygon_centroid(vertices) - self.doc_center
         offset = ((centroid * self.blowup_scale) - centroid)
         return [geom.P(v) + offset for v in vertices]
@@ -790,7 +654,7 @@ class SVGQuasiPlotter(quasi.QuasiPlotter):
             d = d + ' %f,%f' % (vertices[0].x, vertices[0].y)
         attrs = {'d': d}
         fillcolor = 'none' if not fill else self.rgb2css(self.get_fill_color_rgb())
-        attrs['style'] = 'stroke-opacity:.8;fill:%s;stroke:%s;stroke-width:%s;stroke-linejoin:round;' % \
+        attrs['style'] = 'fill:%s;stroke:%s;stroke-width:%s;stroke-linejoin:round;' % \
                           (fillcolor, self.polygon_stroke, self.polygon_stroke_width)
         inkex.etree.SubElement(self.polygon_layers[nlayer], inkex.addNS('path', 'svg'), attrs)
     
@@ -835,80 +699,77 @@ class SVGQuasiPlotter(quasi.QuasiPlotter):
         self._number += 1
 
 option_info = (
-    supereffect.optargs('--active-tab',),
+    svg.optargs('--active-tab',),
     
-    supereffect.optargs('--scale', '-s', type='float', default=1.0, help='Output scale.'),
-    supereffect.optargs('--rotate', '-r', type='float', convert_to='rad', default=0.0, help='Rotation.'),
-#    supereffect.optargs('--flip', '-F', type='inkbool', default=False, help='Flip by 90 deg.'),
-    supereffect.optargs('--symmetry', '-S', type='int', default=5, help='Degrees of symmetry.'),
-    supereffect.optargs('--numlines', '-n', type='int', default=30, help='Number of lines.'),
-    supereffect.optargs('--mid-skinny', '-M', type='int', default=1, help='Midpoint type for skinny diamonds.'),
-    supereffect.optargs('--mid-fat', '-N', type='int', default=1, help='Midpoint type for fat diamonds.'),
-    supereffect.optargs('--skinnyfat-ratio', type='float', default=0.2, help='Skinny/fat ratio'),
-    supereffect.optargs('--segment-ratio', type='float', default=0.5, help='Segment ratio'),
-    supereffect.optargs('--offset-x', type='float', convert_to='world', default=0.0, help='X offset'),
-    supereffect.optargs('--offset-y', type='float', convert_to='world', default=0.0, help='Y offset'),
-    supereffect.optargs('--salt-x', type='float', default=0.1132, help='X offset salt'),
-    supereffect.optargs('--salt-y', type='float', default=0.2137, help='Y offset salt'),
-    supereffect.optargs('--epsilon', type='float', default=0.0001, help='Epsilon'),
+    svg.optargs('--scale', '-s', type='float', default=1.0, help='Output scale.'),
+    svg.optargs('--flip', '-F', type='inkbool', default=False, help='Flip by 90 deg.'),
+    svg.optargs('--symmetry', '-S', type='int', default=5, help='Degrees of symmetry.'),
+    svg.optargs('--numlines', '-n', type='int', default=30, help='Number of lines.'),
+    svg.optargs('--mid-skinny', '-M', type='int', default=1, help='Midpoint type for skinny diamonds.'),
+    svg.optargs('--mid-fat', '-N', type='int', default=1, help='Midpoint type for fat diamonds.'),
+    svg.optargs('--skinnyfat-ratio', type='float', default=0.2, help='Skinny/fat ratio'),
+    svg.optargs('--segment-ratio', type='float', default=0.5, help='Segment ratio'),
+    svg.optargs('--offset-x', type='float', convert_to='world', default=0.0, help='X offset'),
+    svg.optargs('--offset-y', type='float', convert_to='world', default=0.0, help='Y offset'),
+    svg.optargs('--salt-x', type='float', default=0.1132, help='X offset salt'),
+    svg.optargs('--salt-y', type='float', default=0.2137, help='Y offset salt'),
+    svg.optargs('--epsilon', type='float', default=0.0001, help='Epsilon'),
 
-    supereffect.optargs('--polygon-draw', type='inkbool', default=True, help='Draw polygons.'),
-    supereffect.optargs('--polygon-mult', type='int', default=1, help='Number of concentric polygons.'),
-    supereffect.optargs('--polygon-mult-spacing', type='float', convert_to='world', default=0.0, help='Concentric polygon spacing.'),
-    supereffect.optargs('--polygon-fill', '-f', type='inkbool', default=False, help='Fill polygons.'),
-    supereffect.optargs('--polygon-colorfill', type='inkbool', default=False, help='Use color fill.'),
-    supereffect.optargs('--polygon-zfill', '-z', type='inkbool', default=False, help='Fill color is according to polygon type.'),
-    supereffect.optargs('--polygon-stroke', default='#0000ff', help='Polygon CSS stroke color.'),
-    supereffect.optargs('--polygon-stroke-width', default='.5pt', help='Polygon CSS stroke width.'),
+    svg.optargs('--polygon-draw', type='inkbool', default=True, help='Draw polygons.'),
+    svg.optargs('--polygon-mult', type='int', default=1, help='Number of concentric polygons.'),
+    svg.optargs('--polygon-mult-spacing', type='float', convert_to='world', default=0.0, help='Concentric polygon spacing.'),
+    svg.optargs('--polygon-fill', '-f', type='inkbool', default=False, help='Fill polygons.'),
+    svg.optargs('--polygon-colorfill', type='inkbool', default=False, help='Use color fill.'),
+    svg.optargs('--polygon-zfill', '-z', type='inkbool', default=False, help='Fill color is according to polygon type.'),
+    svg.optargs('--polygon-stroke', default='#0000ff', help='Polygon CSS stroke color.'),
+    svg.optargs('--polygon-stroke-width', default='.5pt', help='Polygon CSS stroke width.'),
 
-    supereffect.optargs('--polyseg-draw', type='inkbool', default=True, help='Create segment-only polygon layer.'),
-    supereffect.optargs('--polyseg-stroke', default='#0000ff', help='Polygon CSS stroke color.'),
-    supereffect.optargs('--polyseg-stroke-width', default='.5pt', help='Polygon CSS stroke width.'),
+    svg.optargs('--polyseg-draw', type='inkbool', default=True, help='Create segment-only polygon layer.'),
+    svg.optargs('--polyseg-stroke', default='#0000ff', help='Polygon CSS stroke color.'),
+    svg.optargs('--polyseg-stroke-width', default='.5pt', help='Polygon CSS stroke width.'),
 
-    supereffect.optargs('--polysegpath-draw', type='inkbool', default=True, help='Create paths from polygon segments.'),
-    supereffect.optargs('--polysegpath-stroke', default='#0000ff', help='Polygon CSS stroke color.'),
-    supereffect.optargs('--polysegpath-stroke-width', default='.5pt', help='Polygon CSS stroke width.'),
+    svg.optargs('--polysegpath-draw', type='inkbool', default=True, help='Create paths from polygon segments.'),
+    svg.optargs('--polysegpath-stroke', default='#0000ff', help='Polygon CSS stroke color.'),
+    svg.optargs('--polysegpath-stroke-width', default='.5pt', help='Polygon CSS stroke width.'),
 
-    supereffect.optargs('--segment-draw', type='inkbool', default=True, help='Draw segments.'),
-    supereffect.optargs('--segment-stroke', default='#0000ff', help='Segment CSS stroke color.'),
-    supereffect.optargs('--segment-stroke-width', default='.5pt', help='Segment CSS stroke width.'),
+    svg.optargs('--segment-draw', type='inkbool', default=True, help='Draw segments.'),
+    svg.optargs('--segment-stroke', default='#0000ff', help='Segment CSS stroke color.'),
+    svg.optargs('--segment-stroke-width', default='.5pt', help='Segment CSS stroke width.'),
 
-    supereffect.optargs('--segpath-draw', type='inkbool', default=True, help='Draw segment paths.'),
-    supereffect.optargs('--segpath-min-segments', '-m', type='int', default=1, help='Min segments in path.'),
-    supereffect.optargs('--segpath-stroke', default='#0000ff', help='Segment CSS stroke color.'),
-    supereffect.optargs('--segpath-stroke-width', default='.5pt', help='Segment CSS stroke width.'),
+    svg.optargs('--segpath-draw', type='inkbool', default=True, help='Draw segment paths.'),
+    svg.optargs('--segpath-min-segments', '-m', type='int', default=1, help='Min segments in path.'),
+    svg.optargs('--segpath-stroke', default='#0000ff', help='Segment CSS stroke color.'),
+    svg.optargs('--segpath-stroke-width', default='.5pt', help='Segment CSS stroke width.'),
 
-    supereffect.optargs('--convex-hull-draw', type='inkbool', default=True, help='Draw convex hull.'),
-    supereffect.optargs('--hull-draw', type='inkbool', default=True, help='Draw polygon hull.'),
-    supereffect.optargs('--hull-inner-draw', type='inkbool', default=True, help='Draw inner polygon hulls.'),
-    supereffect.optargs('--hull-stroke', default='#0000ff', help='Polygon CSS stroke color.'),
-    supereffect.optargs('--hull-stroke-width', default='.5pt', help='Polygon CSS stroke width.'),
+    svg.optargs('--convex-hull-draw', type='inkbool', default=True, help='Draw convex hull.'),
+    svg.optargs('--hull-draw', type='inkbool', default=True, help='Draw polygon hull.'),
+    svg.optargs('--hull-inner-draw', type='inkbool', default=True, help='Draw inner polygon hulls.'),
+    svg.optargs('--hull-stroke', default='#0000ff', help='Polygon CSS stroke color.'),
+    svg.optargs('--hull-stroke-width', default='.5pt', help='Polygon CSS stroke width.'),
 
-    supereffect.optargs('--voronoi-draw', type='inkbool', default=True, help='Draw Voronoi.'),
-    supereffect.optargs('--voronoi-clip-to-hull', type='inkbool', default=True, help='Clip to hull ploygon.'),
-    supereffect.optargs('--voronoi-make-paths', type='inkbool', default=True, help='Make paths from segments.'),
-    supereffect.optargs('--voronoi-stroke', default='#0000ff', help='Voronoi CSS stroke color.'),
-    supereffect.optargs('--voronoi-stroke-width', default='.5pt', help='Voronoi CSS stroke width.'),
+    svg.optargs('--voronoi-draw', type='inkbool', default=True, help='Draw Voronoi.'),
+    svg.optargs('--voronoi-stroke', default='#0000ff', help='Voronoi CSS stroke color.'),
+    svg.optargs('--voronoi-stroke-width', default='.5pt', help='Voronoi CSS stroke width.'),
 
-    supereffect.optargs('--clip-to-doc', type='inkbool', default=False, help='Clip to document.'),
-    supereffect.optargs('--clip-to-circle', type='inkbool', default=False, help='Circular clip region.'),
-    supereffect.optargs('--clip-to-margins', '-C', type='inkbool', default=True, help='Clip to document margins.'),
-#    supereffect.optargs('--clip-segments', type='inkbool', default=True, help='Clip segments to document margins.'),
+    svg.optargs('--clip-to-doc', type='inkbool', default=False, help='Clip to document.'),
+    svg.optargs('--clip-to-circle', type='inkbool', default=False, help='Circular clip region.'),
+    svg.optargs('--clip-poly', '-C', type='inkbool', default=True, help='Clip polygons to document margins.'),
+    svg.optargs('--clip-segments', type='inkbool', default=True, help='Clip segments to document margins.'),
     
-    supereffect.optargs('--margin-left', type='float',   convert_to='world', default=1.0, help='Left margin'),
-    supereffect.optargs('--margin-right', type='float',  convert_to='world', default=1.0, help='Right margin'),
-    supereffect.optargs('--margin-top', type='float',   convert_to='world', default=1.0, help='Top margin'),
-    supereffect.optargs('--margin-bottom', type='float',   convert_to='world', default=1.0, help='Bottom margin'),
+    svg.optargs('--margin-left', type='float',   convert_to='world', default=1.0, help='Left margin'),
+    svg.optargs('--margin-right', type='float',  convert_to='world', default=1.0, help='Right margin'),
+    svg.optargs('--margin-top', type='float',   convert_to='world', default=1.0, help='Top margin'),
+    svg.optargs('--margin-bottom', type='float',   convert_to='world', default=1.0, help='Bottom margin'),
 
-    supereffect.optargs('--project-sphere', type='inkbool', default=False, help='Project on to sphere.'),
-    supereffect.optargs('--project-invert', type='inkbool', default=False, help='Invert projection.'),
-    supereffect.optargs('--project-radius-useclip', type='inkbool', default=True, help='Use clipping circle for radius.'),
-    supereffect.optargs('--project-radius', type='float',   convert_to='world', default=0.0, help='Projection radius.'),
-    supereffect.optargs('--blowup-scale', type='float', default=1.0, help='Blow up scale.'),
+    svg.optargs('--project-sphere', type='inkbool', default=False, help='Project on to sphere.'),
+    svg.optargs('--project-invert', type='inkbool', default=False, help='Invert projection.'),
+    svg.optargs('--project-radius-useclip', type='inkbool', default=True, help='Use clipping circle for radius.'),
+    svg.optargs('--project-radius', type='float',   convert_to='world', default=0.0, help='Projection radius.'),
+    svg.optargs('--blowup-scale', type='float', default=1.0, help='Blow up scale.'),
 
-    supereffect.optargs('--log-create-log', '-D', type='inkbool', default=True, help='Create log files'),
-    supereffect.optargs('--log-level', '-L', default='DEBUG', help='Log level'),
-    supereffect.optargs('--log-filename', '-O', default='quasink.log', help='Full pathname of log file'),
+    svg.optargs('--log-create-log', '-D', type='inkbool', default=True, help='Create log files'),
+    svg.optargs('--log-level', '-L', default='DEBUG', help='Log level'),
+    svg.optargs('--log-filename', '-O', default='quasink.log', help='Full pathname of log file'),
 )
 
 quasink = Quasink(option_info=option_info)
