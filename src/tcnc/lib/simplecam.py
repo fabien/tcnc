@@ -71,7 +71,7 @@ class SimpleCAM(object):
             """
             pass
         
-        def draw_feed_rotate(self, angle1, angle2, depth=0.0):
+        def draw_feed_rotate(self, center, angle1, angle2, depth=0.0):
             """Draw a tool rotation from :angle1: to :angle2: on the
             preview layer.
             :width: Line (tool) width in machine units
